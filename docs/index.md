@@ -54,7 +54,7 @@ cosign generate-key-pair
 
 1. Rename Repository
 2. Generate Cosign Keys (optional if you want to run with signing locally, see above)
-3. Update `.goreleaser.yml`, search/replace go-project-template with new project name, adjust GitHub owner
+3. Update `.goreleaser.yml`, search/replace homeassistant-barcode-scanner with new project name, adjust GitHub owner
 4. Update `main.go`,
 5. Update `go.mod`, rename go project (using IDE is best so renames happen across all files)
 

@@ -1,4 +1,4 @@
-module github.com/ekristen/go-project-template
+module github.com/miguelangel-nubla/homeassistant-barcode-scanner
 
 go 1.23.0
 

@@ -84,7 +84,7 @@ cosign generate-key-pair
 
 1. Rename Repository
 2. Generate Cosign Keys (optional if you want to run with signing locally, see above)
-3. Update `.goreleaser.yml`, search/replace go-project-template with new project name, adjust GitHub owner
+3. Update `.goreleaser.yml`, search/replace homeassistant-barcode-scanner with new project name, adjust GitHub owner
 4. Update `main.go`,
 5. Update `go.mod`, rename go project (using IDE is best so renames happen across all files)
 
@@ -93,7 +93,7 @@ cosign generate-key-pair
 The Dockerfile is set up to build the project and then copy the artifacts from the build into the final image. It is
 also configured to allow you to just run `docker build` directly if you do not want to use GoReleaser. 
 
-To make things easier and faster, the Dockerfile has a default build argument set to `go-project-template`. GoReleaser
+To make things easier and faster, the Dockerfile has a default build argument set to `homeassistant-barcode-scanner`. GoReleaser
 will pass the new project name down (if you update the `.goreleaser.yml` file) and the Dockerfile will use that instead.
 
 However, it would be better longer term to update this argument in the file or remove it all together.
