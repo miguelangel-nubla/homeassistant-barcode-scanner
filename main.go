@@ -11,6 +11,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v3"
 
+	"github.com/miguelangel-nubla/homeassistant-barcode-scanner/pkg/common"
 	"github.com/miguelangel-nubla/homeassistant-barcode-scanner/pkg/config"
 	"github.com/miguelangel-nubla/homeassistant-barcode-scanner/pkg/homeassistant"
 	"github.com/miguelangel-nubla/homeassistant-barcode-scanner/pkg/mqtt"
@@ -18,8 +19,7 @@ import (
 )
 
 const (
-	AppName    = "homeassistant-barcode-scanner"
-	AppVersion = "1.0.0"
+	AppName = "homeassistant-barcode-scanner"
 )
 
 // Application represents the main application
@@ -36,7 +36,7 @@ func main() {
 	cmd := &cli.Command{
 		Name:    AppName,
 		Usage:   "USB Barcode Scanner client for Home Assistant",
-		Version: AppVersion,
+		Version: common.GetVersion(),
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:    "config",
@@ -87,7 +87,7 @@ func runApp(ctx context.Context, c *cli.Command) error {
 		logger.SetFormatter(&logrus.JSONFormatter{})
 	}
 
-	logger.Infof("Starting %s v%s", AppName, AppVersion)
+	logger.Infof("Starting %s v%s", AppName, common.GetVersion())
 
 	// Create and run application
 	app := &Application{
@@ -127,7 +127,7 @@ func (app *Application) Run() error {
 	app.haManager = homeassistant.NewIntegration(
 		app.mqttClient,
 		&app.config.HomeAssistant,
-		AppVersion,
+		common.GetVersion(),
 		app.logger,
 	)
 

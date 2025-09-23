@@ -13,9 +13,9 @@ import (
 
 // Integration handles Home Assistant MQTT integration
 type Integration struct {
-	mqtt   *mqtt.Client
-	config *config.HomeAssistantConfig
-	logger *logrus.Logger
+	mqtt    *mqtt.Client
+	config  *config.HomeAssistantConfig
+	logger  *logrus.Logger
 	version string
 }
 
@@ -49,9 +49,9 @@ type BarcodePayload struct {
 // NewIntegration creates a new Home Assistant integration instance
 func NewIntegration(mqttClient *mqtt.Client, config *config.HomeAssistantConfig, version string, logger *logrus.Logger) *Integration {
 	return &Integration{
-		mqtt:   mqttClient,
-		config: config,
-		logger: logger,
+		mqtt:    mqttClient,
+		config:  config,
+		logger:  logger,
 		version: version,
 	}
 }
@@ -106,7 +106,7 @@ func (i *Integration) publishDiscoveryConfig() error {
 		Identifiers:  []string{i.config.EntityID},
 		Name:         i.config.DeviceName,
 		Model:        "USB Barcode Scanner",
-		Manufacturer: "Barcode Scanner Client",
+		Manufacturer: "https://github.com/miguelangel-nubla/homeassistant-barcode-scanner",
 		SWVersion:    i.version,
 	}
 
