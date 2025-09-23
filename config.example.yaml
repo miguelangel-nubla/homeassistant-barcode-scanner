@@ -1,0 +1,74 @@
+# Home Assistant Barcode Scanner Configuration
+
+# MQTT broker configuration
+mqtt:
+  # MQTT broker URL with protocol (required)
+  # Supported protocols: mqtt://, mqtts://, ws://, wss://
+  # Examples:
+  #   mqtt://homeassistant.local:1883    (standard MQTT)
+  #   mqtts://homeassistant.local:8883   (MQTT over SSL/TLS)
+  #   ws://homeassistant.local:1883      (MQTT over WebSocket)
+  #   wss://homeassistant.local:8883     (MQTT over Secure WebSocket)
+  broker_url: "mqtt://homeassistant.local:1883"
+
+  # MQTT client ID (default: homeassistant-barcode-scanner)
+  client_id: "homeassistant-barcode-scanner"
+
+  # MQTT authentication (optional)
+  username: "mqtt_user"
+  password: "mqtt_password"
+
+  # MQTT QoS level: 0, 1, or 2 (default: 1)
+  qos: 1
+
+  # Retain messages (default: false)
+  retained: false
+
+  # Keep alive interval in seconds (default: 60)
+  keep_alive: 60
+
+  # Skip TLS certificate verification for mqtts:// and wss:// connections (default: false)
+  # WARNING: Only use this for testing with self-signed certificates
+  insecure_skip_verify: false
+
+# Barcode scanner configuration
+scanner:
+  # USB Vendor ID and Product ID (optional - if not specified, will auto-detect)
+  # vendor_id: 0x05e0
+  # product_id: 0x1200
+
+  # Direct device path (optional - if specified, vendor_id and product_id are ignored)
+  # device_path: "/dev/hidraw0"
+
+  # Termination character sent by scanner after each barcode (optional)
+  # Options: "enter", "tab", "none" (or empty for timeout-based detection)
+  # Default: "enter" if not specified
+  termination_char: "enter"
+
+# Home Assistant integration configuration
+homeassistant:
+  # Entity ID for the barcode sensor (required)
+  entity_id: "barcode_scanner"
+
+  # Device name as it appears in Home Assistant (default: Barcode Scanner)
+  device_name: "USB Barcode Scanner"
+
+  # Device ID (default: barcode_scanner)
+  device_id: "barcode_scanner"
+
+  # MQTT discovery prefix (default: homeassistant)
+  discovery_prefix: "homeassistant"
+
+  # Custom state topic (optional - will be auto-generated if not specified)
+  # state_topic: "homeassistant/sensor/barcode_scanner/state"
+
+  # Custom availability topic (optional - will be auto-generated if not specified)
+  # availability_topic: "homeassistant/sensor/barcode_scanner/availability"
+
+# Logging configuration
+logging:
+  # Log level: debug, info, warn, error (default: info)
+  level: "info"
+
+  # Log format: text, json (default: text)
+  format: "text"

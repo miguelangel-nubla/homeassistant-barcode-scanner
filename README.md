@@ -1,135 +1,176 @@
-# Go Project Template
+# Home Assistant Barcode Scanner Client
 
-This is an opinionated go project template to use as a starting point for new projects.
+A Go application that reads USB barcode scanner input (HID) and publishes the scanned values to Home Assistant via MQTT with auto-discovery support.
 
 ## Features
 
-- Builds with [GoReleaser](https://goreleaser.com)
-  - Automated with GitHub Actions
-  - Signed with Cosign (providing you generate a private key)
-- Linting with [golangci-lint](https://golangci-lint.run/)
-  - Automated with GitHub Actions
-- Builds with Docker
-  - While designed to use goreleaser, you can still just run `docker build`
-- Apple Notary Signing Support
-- Opinionated Layout
-  - Never use `internal/` folder
-  - Everything is under `pkg/` folder
-- Commits must meet [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/)
-  - Automated with GitHub Actions ([commit-lint](https://github.com/conventional-changelog/commitlint/#what-is-commitlint))
-- Automatic Dependency Management with [Renovate](https://github.com/renovatebot/renovate)
-- Automatic [Semantic Releases](https://semantic-release.gitbook.io/)
-- Documentation with Material for MkDocs
-- API Server Example
-  - Uses Gorilla Mux (yes it's been archived, still the best option)
-- Stubbed out Go Tests (**note:** they are not comprehensive)
+- **USB HID Barcode Scanner Support**: Automatically detects and reads from USB barcode scanners
+- **Home Assistant Integration**: Full MQTT auto-discovery with device registration
+- **Multiple MQTT Protocols**: Support for TCP, SSL/TLS, WebSocket, and Secure WebSocket connections
+- **Auto-Reconnection**: Robust MQTT connection handling with automatic reconnection
+- **Availability Tracking**: Birth/will messages and availability status for Home Assistant
+- **Device Auto-Detection**: Automatically finds barcode scanner devices or use specific device paths
+- **Configurable Logging**: Structured logging with configurable levels and formats
 
-### Opinionated Decisions
+## Installation
 
-- Uses `init` functions for registering commands globally.
-  - This allows for multiple `main` package files to be written and include different commands.
-  - Allows the command code to remain isolated from each other and a simple import to include the command.
+### From Source
 
-### Multi-Platform Builds
-
-This project is designed to build for multiple platforms, including macOS, Linux, and Windows. It also supports
-multiple architectures including amd64 and arm64. 
-
-The goreleaser configuration is set up to build for all platforms and architectures by default. It even supports pushing
-multi-architecture docker manifests by default. Some knowledge about GoReleaser's configuration is required should you
-want to remove these capabilities.
-
-### Apple Notary Signing
-
-This makes use of a tool called [quill](https://github.com/anchore/quill). To make use of this feature you will need
-to have an Apple Developer account and be able to create an Developer ID certificate.
-
-The workflow is designed to pull the necessary secrets from 1Password. This is done to keep the secrets out of the
-GitHub Actions logs. The secrets are pulled from 1Password if the event triggering the workflow is a tag **AND** the
-actor is the owner of the repository. This is to prevent forks from being able to pull the secrets and is an extra
-guard to help prevent theft.
-
-GoReleaser is configured to always sign and notarize for macOS. However, it will not notarize if the build is a snapshot.
-
-If configured properly, the binaries located within the archives produced by GoReleaser will be signed and notarized
-by the Apple Notary Service and will automatically run on any macOS system without having to approve it under System
-Preferences.
-
-If you do not wish to use 1Password simply export the same environment variables using secrets to populate them. The 
-`QUILL_SIGN_P12` and `QUILL_NOTARY_KEY` need to be base64 encoded or paths to the actual files.
-
-## Building
-
-The following will build binaries in snapshot order.
-
-```console
-goreleaser --clean --snapshot --skip sign
+```bash
+git clone https://github.com/miguelangel-nubla/homeassistant-barcode-scanner.git
+cd homeassistant-barcode-scanner
+go build -o homeassistant-barcode-scanner
 ```
 
-**Note:** we are skipping signing because this project uses cosign's keyless signing with GitHub Actions OIDC provider.
+### Using Go Install
 
-You can opt to generate a cosign keypair locally and set the following environment variables, and then you can run
-`goreleaser --clean --snapshot` without the `--skip sign` flag to get signed artifacts.
-
-Environment Variables:
-- 
-- COSIGN_PASSWORD
-- COSIGN_KEY (path to the key file) (recommend cosign.key, it is git ignored already)
-
-```console
-cosign generate-key-pair
+```bash
+go install github.com/miguelangel-nubla/homeassistant-barcode-scanner@latest
 ```
 
-## Configure
+## Configuration
 
-1. Rename Repository
-2. Generate Cosign Keys (optional if you want to run with signing locally, see above)
-3. Update `.goreleaser.yml`, search/replace homeassistant-barcode-scanner with new project name, adjust GitHub owner
-4. Update `main.go`,
-5. Update `go.mod`, rename go project (using IDE is best so renames happen across all files)
+Create a configuration file `config.yaml` based on the example:
 
-### Docker
-
-The Dockerfile is set up to build the project and then copy the artifacts from the build into the final image. It is
-also configured to allow you to just run `docker build` directly if you do not want to use GoReleaser. 
-
-To make things easier and faster, the Dockerfile has a default build argument set to `homeassistant-barcode-scanner`. GoReleaser
-will pass the new project name down (if you update the `.goreleaser.yml` file) and the Dockerfile will use that instead.
-
-However, it would be better longer term to update this argument in the file or remove it all together.
-
-### Signing
-
-Signing happens via cosign's keyless features using the GitHub Actions OIDC provider.
-
-### Releases
-
-In order for Semantic Releases and GoReleaser to work properly you have to create a PAT to run Semantic Release
-so it's actions against the repository can trigger other workflows. Unfortunately there is no way to trigger
-a workflow from a workflow if both are run by the automatically generated GitHub Actions secret.
-
-1. Create PAT that has content `write` permissions to the repository
-2. Create GitHub Action Secret
-   - `SEMANTIC_GITHUB_TOKEN` -> populated with PAT from step 1
-3. Done
-
-## Documentation
-
-The project is built to have the documentation right alongside the code in the `docs/` directory leveraging Mkdocs Material.
-
-In the root of the project exists mkdocs.yml which drives the configuration for the documentation.
-
-This README.md is currently copied to `docs/index.md` and the documentation is automatically published to the GitHub
-pages location for this repository using a GitHub Action workflow. It does not use the `gh-pages` branch.
-
-### Running Locally
-
-```console
-make docs-serve
+```bash
+cp config.example.yaml config.yaml
 ```
 
-OR (if you have docker)
+### Required Configuration
 
-```console
-docker run --rm -it -p 8000:8000 -v ${PWD}:/docs squidfunk/mkdocs-material
+The minimum required configuration:
+
+```yaml
+mqtt:
+  broker_url: "mqtt://your-mqtt-broker.local:1883"
+
+homeassistant:
+  entity_id: "barcode_scanner"
 ```
+
+### Complete Configuration Options
+
+See `config.example.yaml` for all available configuration options including:
+
+- MQTT broker settings (broker URL, authentication)
+- Scanner device configuration (vendor/product ID, device path)
+- Home Assistant integration settings
+- Logging configuration
+
+## Usage
+
+### Basic Usage
+
+```bash
+./homeassistant-barcode-scanner -c config.yaml
+```
+
+### List Available Devices
+
+To see all HID devices that might be barcode scanners:
+
+```bash
+./homeassistant-barcode-scanner --list-devices
+```
+
+### Command Line Options
+
+```bash
+./homeassistant-barcode-scanner --help
+```
+
+- `-c, --config FILE`: Specify configuration file (default: config.yaml)
+- `--list-devices`: List available HID devices that might be barcode scanners
+- `--log-level LEVEL`: Set log level (debug, info, warn, error)
+- `--version`: Show version information
+
+## MQTT Protocols
+
+The application supports multiple MQTT connection protocols:
+
+- **mqtt://**: Standard MQTT over TCP (default, typically port 1883)
+- **mqtts://**: MQTT over SSL/TLS (typically port 8883)
+- **ws://**: MQTT over WebSocket (typically port 1883)
+- **wss://**: MQTT over Secure WebSocket (typically port 8883)
+
+## Home Assistant Integration
+
+The application automatically registers with Home Assistant using MQTT auto-discovery:
+
+1. **Device Registration**: Creates a device in Home Assistant with model and version info
+2. **Sensor Entity**: Creates a sensor entity for barcode values
+3. **Availability Tracking**: Reports online/offline status
+4. **Auto-Expiration**: Sensor values expire after 5 minutes to prevent stale data
+
+### Entity Details
+
+- **Entity ID**: Configurable via `homeassistant.entity_id`
+- **Device Class**: Barcode scanner with appropriate icon
+- **State**: JSON payload with barcode value and timestamp
+- **Availability**: Online/offline status with birth/will messages
+
+## Barcode Scanner Compatibility
+
+The application works with USB HID barcode scanners that emulate keyboard input. It supports:
+
+- Standard keyboard emulation scanners
+- Most commercial barcode scanner brands (Honeywell, Symbol, Datalogic, Zebra, etc.)
+- Auto-detection based on device characteristics
+- Manual device specification via vendor/product ID or device path
+
+## Troubleshooting
+
+### Scanner Not Detected
+
+1. Run with `--list-devices` to see available devices
+2. Check if your scanner appears in the list
+3. If found, note the vendor/product ID and add to config
+4. Ensure proper USB permissions (may require udev rules on Linux)
+
+### MQTT Connection Issues
+
+1. Verify MQTT broker URL and protocol
+2. Check authentication credentials
+3. Ensure network connectivity
+4. Review logs with `--log-level debug`
+
+### Permission Issues (Linux)
+
+Add udev rules for HID device access:
+
+```bash
+# Create udev rule file
+sudo tee /etc/udev/rules.d/99-hid-barcode.rules > /dev/null << 'EOF'
+# Allow access to HID devices for barcode scanners
+SUBSYSTEM=="hidraw", MODE="0666"
+KERNEL=="hidraw*", MODE="0666"
+EOF
+
+# Reload udev rules
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+## Development
+
+### Building
+
+```bash
+make build
+```
+
+### Testing
+
+```bash
+make test
+```
+
+### Linting
+
+```bash
+make lint
+```
+
+## License
+
+[License information would go here]

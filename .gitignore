@@ -1,6 +1,37 @@
+# IDE
 .idea/
+.vscode/
+*.swp
+*.swo
+
+# Build artifacts
 dist/
 public/
+homeassistant-barcode-scanner
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Configuration files (may contain secrets)
+config.yaml
+config.yml
 .env*
 *.key
+*.pem
+*.crt
+
+# Temporary files
 tmp/
+*.tmp
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Go specific
+vendor/
+*.test
+*.out
+coverage.txt
