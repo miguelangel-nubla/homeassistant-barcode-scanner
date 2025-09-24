@@ -3,6 +3,7 @@ package scanner
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/karalabe/hid"
@@ -11,43 +12,81 @@ import (
 
 // BarcodeScanner represents a USB HID barcode scanner
 type BarcodeScanner struct {
-	device          *hid.Device
-	logger          *logrus.Logger
-	vendorID        uint16
-	productID       uint16
-	devicePath      string
-	terminationChar string
-	onScan          func(string)
-	stopCh          chan struct{}
-	buffer          strings.Builder
+	device              *hid.Device
+	logger              *logrus.Logger
+	vendorID            uint16
+	productID           uint16
+	requiredSerial      string
+	stopCh              chan struct{}
+	reconnectDelay      time.Duration
+	isReconnecting      bool
+	reconnectMutex      sync.RWMutex
+	onConnectionChange  func(bool)
+	connectedDeviceInfo *hid.DeviceInfo
+	// Components
+	hidProcessor  *HIDProcessor
+	deviceMonitor *DeviceMonitor
 }
 
 // NewBarcodeScanner creates a new barcode scanner instance
-func NewBarcodeScanner(vendorID, productID uint16, devicePath, terminationChar string, logger *logrus.Logger) *BarcodeScanner {
-	return &BarcodeScanner{
-		vendorID:        vendorID,
-		productID:       productID,
-		devicePath:      devicePath,
-		terminationChar: terminationChar,
-		logger:          logger,
-		stopCh:          make(chan struct{}),
+func NewBarcodeScanner(vendorID, productID uint16, terminationChar string, logger *logrus.Logger) *BarcodeScanner {
+	return NewBarcodeScannerWithSerial(vendorID, productID, "", terminationChar, logger)
+}
+
+// NewBarcodeScannerWithSerial creates a new barcode scanner instance with serial number requirement
+func NewBarcodeScannerWithSerial(
+	vendorID, productID uint16,
+	requiredSerial, terminationChar string,
+	logger *logrus.Logger,
+) *BarcodeScanner {
+	s := &BarcodeScanner{
+		vendorID:       vendorID,
+		productID:      productID,
+		requiredSerial: requiredSerial,
+		logger:         logger,
+		stopCh:         make(chan struct{}),
+		reconnectDelay: 1 * time.Second,
 	}
+
+	// Initialize HID processor
+	s.hidProcessor = NewHIDProcessor(terminationChar, logger)
+
+	// Initialize device monitor with target checker
+	s.deviceMonitor = NewDeviceMonitor(s.isTargetDevice, logger)
+
+	return s
 }
 
 // SetOnScanCallback sets the callback function to be called when a barcode is scanned
 func (s *BarcodeScanner) SetOnScanCallback(callback func(string)) {
-	s.onScan = callback
+	s.hidProcessor.SetOnScanCallback(callback)
 }
 
-// Start begins listening for barcode scans
+// SetOnConnectionChangeCallback sets the callback function to be called when connection state changes
+func (s *BarcodeScanner) SetOnConnectionChangeCallback(callback func(bool)) {
+	s.onConnectionChange = callback
+}
+
+// Start begins listening for barcode scans with reactive auto-reconnection
 func (s *BarcodeScanner) Start() error {
+	// Start device monitoring
+	s.deviceMonitor.Start()
+
 	device, err := s.openDevice()
 	if err != nil {
 		return err
 	}
 	s.device = device
 
-	go s.readLoop()
+	// Notify initial connection state
+	if s.onConnectionChange != nil {
+		s.logger.Debugf("Notifying connection change callback: connected=true")
+		s.onConnectionChange(true)
+	} else {
+		s.logger.Warnf("No connection change callback set when scanner connected")
+	}
+
+	go s.readLoopWithReconnect()
 	s.logger.Info("Barcode scanner started successfully")
 	return nil
 }
@@ -55,267 +94,303 @@ func (s *BarcodeScanner) Start() error {
 // openDevice finds and opens a suitable HID device
 func (s *BarcodeScanner) openDevice() (*hid.Device, error) {
 	devices := hid.Enumerate(0, 0)
+	s.logger.Debugf("Found %d total HID devices", len(devices))
+
 	if len(devices) == 0 {
 		return nil, fmt.Errorf("no HID devices found")
 	}
 
-	// Try specific device path first
-	if s.devicePath != "" {
-		for _, deviceInfo := range devices {
-			if deviceInfo.Path == s.devicePath {
-				device, err := deviceInfo.Open()
-				if err != nil {
-					return nil, fmt.Errorf("failed to open device at path %s: %w", s.devicePath, err)
-				}
-				s.logger.Infof("Opened device at path: %s", s.devicePath)
-				return device, nil
-			}
-		}
-		return nil, fmt.Errorf("device not found at path: %s", s.devicePath)
-	}
-
-	// Try specific vendor/product ID
+	// Look for target device by VID/PID and optional serial
 	if s.vendorID != 0 && s.productID != 0 {
-		for _, deviceInfo := range devices {
-			if deviceInfo.VendorID == s.vendorID && deviceInfo.ProductID == s.productID {
-				device, err := deviceInfo.Open()
-				if err != nil {
-					return nil, fmt.Errorf("failed to open device %04x:%04x: %w", s.vendorID, s.productID, err)
-				}
-				s.logger.Infof("Opened device %04x:%04x (%s)", s.vendorID, s.productID, deviceInfo.Product)
-				return device, nil
-			}
+		s.logger.Debugf("Looking for device with VID:PID %04x:%04x", s.vendorID, s.productID)
+		if s.requiredSerial != "" {
+			s.logger.Debugf("Also requiring serial: %s", s.requiredSerial)
 		}
-		return nil, fmt.Errorf("device %04x:%04x not found", s.vendorID, s.productID)
-	}
 
-	// Auto-detect barcode scanner
-	for _, deviceInfo := range devices {
-		if s.isLikelyBarcodeScanner(deviceInfo) {
-			device, err := deviceInfo.Open()
-			if err != nil {
-				s.logger.Warnf("Failed to open potential scanner %s: %v", deviceInfo.Product, err)
+		for _, deviceInfo := range devices {
+			if !s.isTargetDevice(&deviceInfo) {
 				continue
 			}
-			s.logger.Infof("Auto-detected and opened scanner: %s", deviceInfo.Product)
+
+			s.logger.Debugf("Found matching device %04x:%04x (%s - %s), attempting to open",
+				deviceInfo.VendorID, deviceInfo.ProductID, deviceInfo.Manufacturer, deviceInfo.Product)
+			device, err := deviceInfo.Open()
+			if err != nil {
+				return nil, fmt.Errorf("failed to open device %04x:%04x: %w", s.vendorID, s.productID, err)
+			}
+			s.logger.Infof("Opened device %04x:%04x (%s)", s.vendorID, s.productID, deviceInfo.Product)
+			s.connectedDeviceInfo = s.normalizeDeviceInfo(&deviceInfo)
 			return device, nil
+		}
+
+		if s.requiredSerial != "" {
+			return nil, fmt.Errorf("device %04x:%04x with serial '%s' not found", s.vendorID, s.productID, s.requiredSerial)
+		} else {
+			return nil, fmt.Errorf("device %04x:%04x not found", s.vendorID, s.productID)
 		}
 	}
 
-	return nil, fmt.Errorf("no suitable barcode scanner devices found")
+	return nil, fmt.Errorf("device %04x:%04x not found", s.vendorID, s.productID)
 }
 
 // Stop stops the barcode scanner
 func (s *BarcodeScanner) Stop() error {
 	close(s.stopCh)
+	s.deviceMonitor.Stop()
+	return s.closeDevice()
+}
+
+// closeDevice safely closes the current device
+func (s *BarcodeScanner) closeDevice() error {
+	s.reconnectMutex.Lock()
+	defer s.reconnectMutex.Unlock()
 
 	if s.device != nil {
-		err := s.device.Close()
-		s.device = nil
-		if err != nil {
+		if err := s.device.Close(); err != nil {
+			s.logger.Errorf("Error closing HID device: %v", err)
+			s.device = nil
+			s.connectedDeviceInfo = nil
 			return fmt.Errorf("failed to close HID device: %w", err)
 		}
+		s.device = nil
+		s.connectedDeviceInfo = nil
+		s.logger.Debug("HID device closed successfully")
 	}
 
 	s.logger.Info("Barcode scanner stopped")
 	return nil
 }
 
-// isLikelyBarcodeScanner determines if a device is likely a barcode scanner
-func (s *BarcodeScanner) isLikelyBarcodeScanner(deviceInfo hid.DeviceInfo) bool {
-	// Check usage page and usage for HID keyboard (most barcode scanners emulate keyboards)
-	if deviceInfo.UsagePage == 1 && deviceInfo.Usage == 6 {
-		return true
+// isTargetDevice checks if a device matches our target criteria
+func (s *BarcodeScanner) isTargetDevice(deviceInfo *hid.DeviceInfo) bool {
+	// Check vendor/product ID
+	if deviceInfo.VendorID != s.vendorID || deviceInfo.ProductID != s.productID {
+		return false
 	}
 
-	// Check for known barcode scanner manufacturers
-	manufacturerLower := strings.ToLower(deviceInfo.Manufacturer)
-	manufacturerKeywords := []string{"newtologic", "honeywell", "symbol", "datalogic", "zebra", "unitech", "cipherlab", "opticon"}
-
-	for _, keyword := range manufacturerKeywords {
-		if strings.Contains(manufacturerLower, keyword) {
-			return true
-		}
+	// If serial is required, check it too
+	if s.requiredSerial != "" {
+		return deviceInfo.Serial == s.requiredSerial
 	}
 
-	// Check product name for scanner keywords
-	productLower := strings.ToLower(deviceInfo.Product)
-	productKeywords := []string{"scanner", "barcode", "code", "reader", "nt1640", "nt1600", "nt16"}
-
-	for _, keyword := range productKeywords {
-		if strings.Contains(productLower, keyword) {
-			return true
-		}
-	}
-
-	// Check for specific known barcode scanner vendor/product combinations
-	knownScanners := [][2]uint16{
-		{0x060e, 0x16c7}, // Newtologic NT1640S
-		{0x05e0, 0x1200}, // Common Symbol/Motorola scanner
-		{0x0536, 0x02bc}, // Unitech barcode scanner
-	}
-
-	for _, scanner := range knownScanners {
-		if deviceInfo.VendorID == scanner[0] && deviceInfo.ProductID == scanner[1] {
-			return true
-		}
-	}
-
-	return false
+	return true
 }
 
-// readLoop continuously reads from the HID device
-func (s *BarcodeScanner) readLoop() {
-	defer s.logger.Info("Scanner read loop stopped")
+// attemptReconnection tries to reconnect to the scanner device
+func (s *BarcodeScanner) attemptReconnection() error {
+	s.reconnectMutex.Lock()
+	defer s.reconnectMutex.Unlock()
 
-	buffer := make([]byte, 64)
-	lastActivity := time.Now()
+	if s.isReconnecting {
+		s.logger.Debug("Reconnection already in progress")
+		return fmt.Errorf("reconnection already in progress")
+	}
+
+	s.isReconnecting = true
+	defer func() {
+		s.isReconnecting = false
+	}()
+
+	s.logger.Info("Waiting for device to become available...")
+
+	for {
+		select {
+		case <-s.stopCh:
+			s.logger.Debug("Stop signal received during reconnection")
+			return fmt.Errorf("scanner stopped during reconnection")
+		case available := <-s.deviceMonitor.Changes():
+			if available {
+				s.logger.Info("Device detected, attempting to reconnect...")
+				device, err := s.openDevice()
+				if err != nil {
+					s.logger.Debugf("Failed to open detected device: %v", err)
+					continue
+				}
+
+				s.device = device
+				s.logger.Info("Scanner reconnected successfully")
+				if s.onConnectionChange != nil {
+					s.onConnectionChange(true)
+				}
+				return nil
+			}
+		}
+	}
+}
+
+// IsConnected returns true if the scanner device is connected
+func (s *BarcodeScanner) IsConnected() bool {
+	s.reconnectMutex.RLock()
+	defer s.reconnectMutex.RUnlock()
+	return s.device != nil
+}
+
+// GetConnectedDeviceInfo returns the connected device info if available
+func (s *BarcodeScanner) GetConnectedDeviceInfo() *hid.DeviceInfo {
+	s.reconnectMutex.RLock()
+	defer s.reconnectMutex.RUnlock()
+	return s.connectedDeviceInfo
+}
+
+// normalizeDeviceInfo cleans up device information from HID library
+func (s *BarcodeScanner) normalizeDeviceInfo(deviceInfo *hid.DeviceInfo) *hid.DeviceInfo {
+	normalized := *deviceInfo // Copy the struct
+	normalized.Manufacturer = strings.TrimSpace(normalized.Manufacturer)
+	normalized.Product = strings.TrimSpace(normalized.Product)
+	normalized.Serial = strings.TrimSpace(normalized.Serial)
+	return &normalized
+}
+
+// readLoopWithReconnect continuously reads from the HID device with auto-reconnection
+func (s *BarcodeScanner) readLoopWithReconnect() {
+	defer s.logger.Info("Scanner read loop with auto-reconnection stopped")
 
 	for {
 		select {
 		case <-s.stopCh:
 			return
 		default:
-			n, err := s.device.Read(buffer)
-			if err != nil {
-				s.logger.Errorf("Error reading from HID device: %v", err)
-				time.Sleep(100 * time.Millisecond)
-				continue
-			}
-
-			if n > 0 {
-				lastActivity = time.Now()
-				s.processHIDData(buffer[:n])
-			} else {
-				// Check for completed barcode after idle period
-				if time.Since(lastActivity) > 100*time.Millisecond && s.buffer.Len() > 0 {
-					s.finalizeBarcodeInput()
+			if s.device == nil {
+				s.logger.Debug("No device available, attempting reconnection...")
+				if err := s.attemptReconnection(); err != nil {
+					time.Sleep(s.reconnectDelay)
+					continue
 				}
-				time.Sleep(10 * time.Millisecond)
+			}
+
+			if !s.readLoop() {
+				// Device disconnected, close and prepare for reconnection
+				if err := s.closeDevice(); err != nil {
+					s.logger.Errorf("Error closing device during reconnection: %v", err)
+				}
+				// Notify disconnection
+				if s.onConnectionChange != nil {
+					s.onConnectionChange(false)
+				}
+				s.logger.Info("Scanner disconnected, will attempt reconnection...")
 			}
 		}
 	}
 }
 
-// finalizeBarcodeInput processes completed barcode input
-func (s *BarcodeScanner) finalizeBarcodeInput() {
-	barcode := strings.TrimSpace(s.buffer.String())
-	s.buffer.Reset()
+// readLoop continuously reads from the HID device
+// Returns false if device is disconnected and needs reconnection
+func (s *BarcodeScanner) readLoop() bool {
+	s.logger.Debug("Starting scanner read loop")
+	buffer := make([]byte, 64)
+	stats := &readStats{}
 
-	if barcode != "" && s.onScan != nil {
-		s.logger.Infof("Barcode scanned: %s", barcode)
-		s.onScan(barcode)
+	// Start timeout checker in separate goroutine
+	go s.timeoutChecker()
+
+	for {
+		select {
+		case <-s.stopCh:
+			s.logger.Debug("Stop signal received in read loop")
+			return true // Clean shutdown
+		default:
+			if s.device == nil {
+				s.logger.Debug("Device is nil in read loop")
+				return false // Need reconnection
+			}
+
+			if !s.processDeviceRead(buffer, stats) {
+				return false // Need reconnection
+			}
+
+			// Short sleep to prevent tight loop
+			time.Sleep(1 * time.Millisecond)
+		}
 	}
 }
 
-// processHIDData processes raw HID data and extracts characters
-func (s *BarcodeScanner) processHIDData(data []byte) {
-	if len(data) < 3 {
-		return
+type readStats struct {
+	readCount         int
+	errorCount        int
+	consecutiveErrors int
+}
+
+func (s *BarcodeScanner) processDeviceRead(buffer []byte, stats *readStats) bool {
+	n, err := s.device.Read(buffer)
+	stats.readCount++
+
+	if err != nil {
+		return s.handleReadError(err, stats)
 	}
 
-	// Process HID keyboard report: [modifier, reserved, key1-key6]
-	modifier := data[0]
-	for i := 2; i < len(data) && i < 8; i++ {
-		keyCode := data[i]
-		if keyCode == 0 {
-			continue
-		}
+	stats.consecutiveErrors = 0
+	return s.handleReadData(buffer[:n], stats)
+}
 
-		// Check for configured termination character
-		if s.isTerminationKey(keyCode) {
-			s.finalizeBarcodeInput()
+func (s *BarcodeScanner) handleReadError(err error, stats *readStats) bool {
+	stats.errorCount++
+	stats.consecutiveErrors++
+	s.logger.Debugf("Error reading from HID device (read #%d, error #%d): %v",
+		stats.readCount, stats.errorCount, err)
+
+	const maxConsecutiveErrors = 10
+	if stats.consecutiveErrors >= maxConsecutiveErrors {
+		s.logger.Warn("Too many consecutive read errors, assuming device disconnected")
+		return false
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	return true
+}
+
+func (s *BarcodeScanner) handleReadData(data []byte, stats *readStats) bool {
+	if len(data) == 0 {
+		const logInterval = 1000
+		if stats.readCount%logInterval == 0 {
+			s.logger.Debugf("No data received in read #%d", stats.readCount)
+		}
+		return true
+	}
+
+	s.logger.Debugf("Read %d bytes from HID device (read #%d): %x", len(data), stats.readCount, data)
+
+	if s.hasMeaningfulData(data) {
+		s.hidProcessor.ProcessData(data)
+	} else {
+		s.logger.Debugf("Ignoring empty HID report (all zeros)")
+	}
+	return true
+}
+
+func (s *BarcodeScanner) hasMeaningfulData(data []byte) bool {
+	for _, b := range data {
+		if b != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// timeoutChecker runs in a separate goroutine to check for barcode completion timeouts
+func (s *BarcodeScanner) timeoutChecker() {
+	defer s.logger.Debug("Timeout checker stopped")
+
+	const timeoutCheckInterval = 10 * time.Millisecond
+	ticker := time.NewTicker(timeoutCheckInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.stopCh:
 			return
-		}
-
-		if char := s.hidKeyCodeToChar(keyCode, modifier); char != 0 {
-			s.buffer.WriteByte(char)
+		case <-ticker.C:
+			s.hidProcessor.CheckTimeout()
 		}
 	}
 }
 
-// isTerminationKey checks if the key code matches the configured termination character
-func (s *BarcodeScanner) isTerminationKey(keyCode byte) bool {
-	switch strings.ToLower(s.terminationChar) {
-	case "enter", "return":
-		return keyCode == 0x28 // Enter key
-	case "tab":
-		return keyCode == 0x2B // Tab key
-	case "none", "":
-		return false // No termination character, rely on timeout
-	default:
-		// Default to Enter key if unknown termination char specified
-		return keyCode == 0x28
-	}
-}
-
-// hidKeyCodeToChar converts USB HID key codes to ASCII characters
-// Based on Linux input-event-codes.h: https://github.com/torvalds/linux/blob/master/include/uapi/linux/input-event-codes.h
-func (s *BarcodeScanner) hidKeyCodeToChar(keyCode, modifier byte) byte {
-	shifted := (modifier & 0x22) != 0 // Left or right shift pressed
-
-	// Letters (a-z) - KEY_A to KEY_Z (0x04-0x1D)
-	if keyCode >= 0x04 && keyCode <= 0x1D {
-		char := 'a' + keyCode - 0x04
-		if shifted {
-			char = 'A' + keyCode - 0x04
-		}
-		return byte(char)
-	}
-
-	// Numbers (1-9, 0) - KEY_1 to KEY_0 (0x1E-0x27)
-	if keyCode >= 0x1E && keyCode <= 0x27 {
-		if shifted {
-			return "!@#$%^&*()"[keyCode-0x1E]
-		}
-		if keyCode == 0x27 { // KEY_0
-			return '0'
-		}
-		return byte('1' + keyCode - 0x1E)
-	}
-
-	// Common symbols - based on USB HID usage table
-	symbolMap := map[byte][2]byte{
-		0x2C: {' ', ' '},   // KEY_SPACE
-		0x2D: {'-', '_'},   // KEY_MINUS
-		0x2E: {'=', '+'},   // KEY_EQUAL
-		0x2F: {'[', '{'},   // KEY_LEFTBRACE
-		0x30: {']', '}'},   // KEY_RIGHTBRACE
-		0x31: {'\\', '|'},  // KEY_BACKSLASH
-		0x33: {';', ':'},   // KEY_SEMICOLON
-		0x34: {'\'', '"'},  // KEY_APOSTROPHE
-		0x35: {'`', '~'},   // KEY_GRAVE
-		0x36: {',', '<'},   // KEY_COMMA
-		0x37: {'.', '>'},   // KEY_DOT
-		0x38: {'/', '?'},   // KEY_SLASH
-	}
-
-	if chars, exists := symbolMap[keyCode]; exists {
-		if shifted {
-			return chars[1]
-		}
-		return chars[0]
-	}
-
-	return 0 // Unknown key code
+// SetReconnectDelay sets the delay between reconnection attempts
+func (s *BarcodeScanner) SetReconnectDelay(delay time.Duration) {
+	s.reconnectDelay = delay
+	s.logger.Debugf("Scanner reconnect delay set to %v", delay)
 }
 
 // ListAllDevices returns a list of all available HID devices
 func ListAllDevices() []hid.DeviceInfo {
 	return hid.Enumerate(0, 0)
-}
-
-// ListDevices returns a list of available HID devices that might be barcode scanners
-func ListDevices() []hid.DeviceInfo {
-	devices := hid.Enumerate(0, 0)
-	var scanners []hid.DeviceInfo
-
-	scanner := &BarcodeScanner{}
-	for _, device := range devices {
-		if scanner.isLikelyBarcodeScanner(device) {
-			scanners = append(scanners, device)
-		}
-	}
-
-	return scanners
 }

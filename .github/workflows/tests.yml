@@ -15,6 +15,10 @@ jobs:
       - name: download go mods
         run: |
           go mod download
+      - name: lint yaml files
+        run: |
+          pip install yamllint
+          yamllint .
       - name: run go tests
         run: |
           go test -timeout 60s ./...

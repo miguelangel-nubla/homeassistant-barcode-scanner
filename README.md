@@ -1,20 +1,168 @@
-# Home Assistant Barcode Scanner Client
+# Home Assistant Barcode Scanner Bridge
 
-A Go application that reads USB barcode scanner input (HID) and publishes the scanned values to Home Assistant via MQTT with auto-discovery support.
+A lightweight Go application that bridges USB HID barcode scanners to Home Assistant via MQTT. Automatically discovers and manages multiple barcode scanners, publishing scanned barcodes as sensor entities in Home Assistant through MQTT discovery.
 
 ## Features
 
-- **USB HID Barcode Scanner Support**: Automatically detects and reads from USB barcode scanners
-- **Home Assistant Integration**: Full MQTT auto-discovery with device registration
-- **Multiple MQTT Protocols**: Support for TCP, SSL/TLS, WebSocket, and Secure WebSocket connections
-- **Auto-Reconnection**: Robust MQTT connection handling with automatic reconnection
-- **Availability Tracking**: Birth/will messages and availability status for Home Assistant
-- **Device Auto-Detection**: Automatically finds barcode scanner devices or use specific device paths
-- **Configurable Logging**: Structured logging with configurable levels and formats
+- **Multi-Scanner Support**: Configure and manage multiple barcode scanners simultaneously
+- **USB HID Integration**: Direct USB HID communication with barcode scanners
+- **Home Assistant Discovery**: Automatic sensor entity creation via MQTT discovery
+- **Flexible Configuration**: YAML-based configuration with scanner identification by VID/PID
+- **Automatic Reconnection**: Handles device disconnections and MQTT broker reconnections
+- **Cross-Platform**: Supports Linux, Windows, and macOS
+- **Docker Support**: Ready-to-use Docker images available
+- **Device Monitoring**: Real-time scanner connection status and health monitoring
 
-## Installation
+## Quick Start
 
-### From Source
+### 1. Download and Install
+
+Download the latest release for your platform from the [releases page](https://github.com/miguelangel-nubla/homeassistant-barcode-scanner/releases).
+
+### 2. Identify Your Scanner
+
+List available HID devices to find your barcode scanner:
+
+```bash
+homeassistant-barcode-scanner --list-devices
+```
+
+This will show available devices with their Vendor ID (VID) and Product ID (PID).
+
+### 3. Create Configuration
+
+Create a `config.yaml` file:
+
+```yaml
+# MQTT broker configuration
+mqtt:
+  broker_url: "mqtt://homeassistant.local:1883"
+  username: "mqtt_user"
+  password: "mqtt_password"
+  client_id: "ha-barcode-bridge"
+
+# Scanner configuration
+scanners:
+  warehouse_scanner:
+    name: "Warehouse Scanner"
+    identification:
+      vendor_id: 0x60e     # From --list-devices output
+      product_id: 0x16c7   # From --list-devices output
+    termination_char: "enter"
+
+# Home Assistant integration
+homeassistant:
+  discovery_prefix: "homeassistant"
+  instance_id: "workstation"  # Optional, uses hostname if not set
+
+# Logging
+logging:
+  level: "info"
+  format: "text"
+```
+
+### 4. Run the Application
+
+```bash
+homeassistant-barcode-scanner --config config.yaml
+```
+
+The scanner will appear as a sensor entity in Home Assistant with the name "Warehouse Scanner".
+
+## Configuration
+
+### MQTT Settings
+
+```yaml
+mqtt:
+  broker_url: "mqtt://homeassistant.local:1883"  # Required: MQTT broker URL
+  username: "mqtt_user"                          # Optional: MQTT username
+  password: "mqtt_password"                      # Optional: MQTT password
+  client_id: "ha-barcode-bridge"                 # MQTT client identifier
+  qos: 1                                         # MQTT QoS level (0, 1, or 2)
+  keep_alive: 60                                 # Keep alive interval in seconds
+  insecure_skip_verify: false                    # Skip TLS verification (for testing only)
+```
+
+**Supported MQTT protocols:**
+- `mqtt://` - Standard MQTT
+- `mqtts://` - MQTT over SSL/TLS
+- `ws://` - MQTT over WebSocket
+- `wss://` - MQTT over Secure WebSocket
+
+### Scanner Configuration
+
+Configure multiple scanners using map syntax:
+
+```yaml
+scanners:
+  # Scanner ID (used in MQTT topics and Home Assistant entity IDs)
+  office_scanner:
+    name: "Office Barcode Scanner"          # Optional friendly name
+    identification:
+      vendor_id: 0x60e                     # Required: USB Vendor ID
+      product_id: 0x16c7                   # Required: USB Product ID
+      serial: "ABC123"                     # Optional: For multiple identical devices
+    termination_char: "enter"              # "enter", "tab", "none", or empty
+
+  checkout_scanner_1:
+    name: "Checkout #1"
+    identification:
+      vendor_id: 0x60e
+      product_id: 0x16c7
+      serial: "DEF456"                     # Required when multiple devices have same VID/PID
+    termination_char: "enter"
+```
+
+### Home Assistant Integration
+
+```yaml
+homeassistant:
+  discovery_prefix: "homeassistant"        # MQTT discovery prefix (default: "homeassistant")
+  instance_id: "workstation"               # Optional: Unique instance identifier
+```
+
+## Installation Methods
+
+### Binary Installation
+
+1. Download the appropriate binary for your platform from [releases](https://github.com/miguelangel-nubla/homeassistant-barcode-scanner/releases)
+2. Extract and place in your desired location
+3. Make executable (Linux/macOS): `chmod +x homeassistant-barcode-scanner`
+4. Run with your configuration file
+
+### Docker
+
+Pull and run the Docker image:
+
+```bash
+docker run -d \
+  --name ha-barcode-scanner \
+  --device /dev/bus/usb \
+  -v /path/to/config.yaml:/app/config.yaml \
+  ghcr.io/miguelangel-nubla/homeassistant-barcode-scanner:latest
+```
+
+### Docker Compose
+
+```yaml
+version: '3.8'
+services:
+  barcode-scanner:
+    image: ghcr.io/miguelangel-nubla/homeassistant-barcode-scanner:latest
+    container_name: ha-barcode-scanner
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    volumes:
+      - ./config.yaml:/app/config.yaml
+    restart: unless-stopped
+```
+
+### Building from Source
+
+Requirements:
+- Go 1.24 or later
+- USB HID development libraries
 
 ```bash
 git clone https://github.com/miguelangel-nubla/homeassistant-barcode-scanner.git
@@ -22,155 +170,133 @@ cd homeassistant-barcode-scanner
 go build -o homeassistant-barcode-scanner
 ```
 
-### Using Go Install
-
-```bash
-go install github.com/miguelangel-nubla/homeassistant-barcode-scanner@latest
-```
-
-## Configuration
-
-Create a configuration file `config.yaml` based on the example:
-
-```bash
-cp config.example.yaml config.yaml
-```
-
-### Required Configuration
-
-The minimum required configuration:
-
-```yaml
-mqtt:
-  broker_url: "mqtt://your-mqtt-broker.local:1883"
-
-homeassistant:
-  entity_id: "barcode_scanner"
-```
-
-### Complete Configuration Options
-
-See `config.example.yaml` for all available configuration options including:
-
-- MQTT broker settings (broker URL, authentication)
-- Scanner device configuration (vendor/product ID, device path)
-- Home Assistant integration settings
-- Logging configuration
-
 ## Usage
-
-### Basic Usage
-
-```bash
-./homeassistant-barcode-scanner -c config.yaml
-```
-
-### List Available Devices
-
-To see all HID devices that might be barcode scanners:
-
-```bash
-./homeassistant-barcode-scanner --list-devices
-```
 
 ### Command Line Options
 
 ```bash
-./homeassistant-barcode-scanner --help
+homeassistant-barcode-scanner [OPTIONS]
+
+OPTIONS:
+  --config, -c FILE    Load configuration from FILE (default: config.yaml)
+  --list-devices       List available HID devices for configuration
+  --log-level LEVEL    Set log level: debug, info, warn, error (default: info)
+  --help, -h          Show help
+  --version, -v       Show version
 ```
 
-- `-c, --config FILE`: Specify configuration file (default: config.yaml)
-- `--list-devices`: List available HID devices that might be barcode scanners
-- `--log-level LEVEL`: Set log level (debug, info, warn, error)
-- `--version`: Show version information
+### Device Permissions (Linux)
 
-## MQTT Protocols
-
-The application supports multiple MQTT connection protocols:
-
-- **mqtt://**: Standard MQTT over TCP (default, typically port 1883)
-- **mqtts://**: MQTT over SSL/TLS (typically port 8883)
-- **ws://**: MQTT over WebSocket (typically port 1883)
-- **wss://**: MQTT over Secure WebSocket (typically port 8883)
-
-## Home Assistant Integration
-
-The application automatically registers with Home Assistant using MQTT auto-discovery:
-
-1. **Device Registration**: Creates a device in Home Assistant with model and version info
-2. **Sensor Entity**: Creates a sensor entity for barcode values
-3. **Availability Tracking**: Reports online/offline status
-4. **Auto-Expiration**: Sensor values expire after 5 minutes to prevent stale data
-
-### Entity Details
-
-- **Entity ID**: Configurable via `homeassistant.entity_id`
-- **Device Class**: Barcode scanner with appropriate icon
-- **State**: JSON payload with barcode value and timestamp
-- **Availability**: Online/offline status with birth/will messages
-
-## Barcode Scanner Compatibility
-
-The application works with USB HID barcode scanners that emulate keyboard input. It supports:
-
-- Standard keyboard emulation scanners
-- Most commercial barcode scanner brands (Honeywell, Symbol, Datalogic, Zebra, etc.)
-- Auto-detection based on device characteristics
-- Manual device specification via vendor/product ID or device path
-
-## Troubleshooting
-
-### Scanner Not Detected
-
-1. Run with `--list-devices` to see available devices
-2. Check if your scanner appears in the list
-3. If found, note the vendor/product ID and add to config
-4. Ensure proper USB permissions (may require udev rules on Linux)
-
-### MQTT Connection Issues
-
-1. Verify MQTT broker URL and protocol
-2. Check authentication credentials
-3. Ensure network connectivity
-4. Review logs with `--log-level debug`
-
-### Permission Issues (Linux)
-
-Add udev rules for HID device access:
+USB HID devices may require special permissions. Create a udev rule:
 
 ```bash
 # Create udev rule file
-sudo tee /etc/udev/rules.d/99-hid-barcode.rules > /dev/null << 'EOF'
-# Allow access to HID devices for barcode scanners
-SUBSYSTEM=="hidraw", MODE="0666"
-KERNEL=="hidraw*", MODE="0666"
-EOF
+sudo nano /etc/udev/rules.d/99-barcode-scanner.rules
+
+# Add rule (replace VID/PID with your scanner's values)
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="060e", ATTRS{idProduct}=="16c7", MODE="0666", GROUP="plugdev"
 
 # Reload udev rules
 sudo udevadm control --reload-rules
 sudo udevadm trigger
 ```
 
+## Home Assistant Integration
+
+### Automatic Discovery
+
+The application automatically creates Home Assistant sensor entities via MQTT discovery:
+
+- **Entity ID**: `sensor.{instance_id}_{scanner_id}_barcode`
+- **Friendly Name**: Uses scanner `name` from configuration
+- **State**: Last scanned barcode value
+- **Attributes**: Timestamp, scanner info, device availability
+
+### Manual MQTT Topics
+
+If not using discovery, sensors publish to:
+
+```
+homeassistant/sensor/{instance_id}_{scanner_id}_barcode/state
+```
+
+## Troubleshooting
+
+### Scanner Not Detected
+
+1. Run `--list-devices` to verify the scanner is visible
+2. Check USB permissions (Linux udev rules)
+3. Verify VID/PID values in configuration
+4. Try different USB ports or cables
+
+### MQTT Connection Issues
+
+1. Verify broker URL and credentials
+2. Check network connectivity to MQTT broker
+3. Review MQTT broker logs for authentication errors
+4. Test with a simple MQTT client
+
+### Home Assistant Discovery
+
+1. Ensure MQTT integration is configured in Home Assistant
+2. Verify `discovery_prefix` matches Home Assistant configuration
+3. Check MQTT broker logs for discovery messages
+4. Restart Home Assistant if entities don't appear
+
+### Debug Logging
+
+Enable debug logging for detailed troubleshooting:
+
+```bash
+homeassistant-barcode-scanner --log-level debug
+```
+
 ## Development
+
+### Requirements
+
+- Go 1.24+
+- golangci-lint (for linting)
+- Docker (for containerized builds)
 
 ### Building
 
 ```bash
-make build
+# Local development build
+go build
+
+# Release build with GoReleaser
+goreleaser --clean --snapshot --skip sign
 ```
 
 ### Testing
 
 ```bash
-make test
-```
+# Run tests
+go test ./...
 
-### Linting
+# Run with coverage
+go test -cover ./...
 
-```bash
-make lint
+# Lint code
+golangci-lint run
 ```
 
 ## License
 
-[License information would go here]
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests if applicable
+5. Run tests and linting
+6. Submit a pull request
+
+## Support
+
+- 🐛 **Bug Reports**: [GitHub Issues](https://github.com/miguelangel-nubla/homeassistant-barcode-scanner/issues)
+- 💡 **Feature Requests**: [GitHub Discussions](https://github.com/miguelangel-nubla/homeassistant-barcode-scanner/discussions)
+- 📖 **Documentation**: [Project Wiki](https://github.com/miguelangel-nubla/homeassistant-barcode-scanner/wiki)

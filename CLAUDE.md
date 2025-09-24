@@ -1,152 +1,131 @@
-# Claude Development Notes
+# CLAUDE.md
 
-This file contains development-specific information for working with this Home Assistant Barcode Scanner project using Claude Code.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Overview
+## Overview
 
-This is a Go application that bridges USB HID barcode scanners with Home Assistant via MQTT auto-discovery. Built using the [ekristen/go-project-template](https://ekristen.github.io/go-project-template/) as a foundation.
+This is a Home Assistant barcode scanner integration that bridges USB HID barcode scanners to Home Assistant via MQTT. The application runs as a standalone service, automatically discovers and manages multiple barcode scanners, and publishes scanned barcodes to Home Assistant through MQTT discovery.
 
 ## Development Commands
 
-### Building and Testing
+### Building
 ```bash
-# Build the application
+# Build for local development
 go build -o homeassistant-barcode-scanner
 
-# Run tests (when implemented)
+# Build release binaries with GoReleaser
+goreleaser --clean --snapshot --skip sign
+
+# Build Docker image
+docker build -t homeassistant-barcode-scanner .
+```
+
+### Testing
+```bash
+# Run all tests
 go test ./...
 
-# Run linting
+# Run tests with timeout
+go test -timeout 60s ./...
+
+# Download dependencies
+go mod download
+```
+
+### Linting
+```bash
+# Run golangci-lint (requires golangci-lint to be installed)
 golangci-lint run
 
-# Tidy dependencies
-go mod tidy
+# Lint YAML files
+pip install yamllint
+yamllint .
+```
+
+### Running
+```bash
+# Run with default config
+./homeassistant-barcode-scanner
+
+# Run with custom config
+./homeassistant-barcode-scanner --config /path/to/config.yaml
+
+# List available HID devices for configuration
+./homeassistant-barcode-scanner --list-devices
+
+# Run with debug logging
+./homeassistant-barcode-scanner --log-level debug
 ```
 
 ### Documentation
 ```bash
-# Build documentation
-make docs-build
-
-# Serve documentation locally
+# Serve docs locally
 make docs-serve
 
-# Seed docs from README
-make docs-seed
+# Build docs
+make docs-build
 ```
 
-## Architecture Notes
+## Architecture
 
-### Package Structure
-- `pkg/config/` - YAML configuration management with validation
-- `pkg/mqtt/` - MQTT client with auto-reconnection and TLS support
-- `pkg/scanner/` - USB HID barcode scanner input handling
-- `pkg/homeassistant/` - Home Assistant MQTT auto-discovery integration
+The application follows a layered service architecture:
 
-### Key Design Decisions
-- **Raw USB HID approach**: Chosen over input event handling for reliability in background service scenarios
-- **Configuration-driven termination**: Supports scanners with different termination characters (enter, tab, none)
-- **Simplified detection**: Enhanced to recognize Newtologic and other scanner manufacturers
-- **Security focus**: TLS support with configurable certificate validation
+### Core Components
 
-## Configuration Management
+- **CLI Layer** (`pkg/cli/`): Command-line interface handling, argument parsing, and application lifecycle
+- **Application Layer** (`pkg/app/`): Main application orchestration, service management, and event handling
+- **Configuration** (`pkg/config/`): YAML-based configuration management with validation
+- **Scanner Management** (`pkg/scanner/`): HID device discovery, connection management, and barcode reading
+- **MQTT Client** (`pkg/mqtt/`): MQTT broker communication with automatic reconnection
+- **Home Assistant Integration** (`pkg/homeassistant/`): MQTT discovery message generation and device registration
 
-### Required Environment
-- Go 1.24+ (specified in go.mod)
-- USB HID device access permissions (may require udev rules on Linux)
-- MQTT broker with appropriate credentials
+### Service Architecture
 
-### Scanner Detection
-The application uses multiple detection strategies:
-1. **Auto-detection**: Based on manufacturer names and HID usage patterns
-2. **Vendor/Product ID**: Direct specification for known devices
-3. **Device path**: Direct path specification for maximum control
+The application uses a `ServiceManager` pattern that coordinates multiple independent services:
 
-### MQTT Protocols Supported
-- `mqtt://` - Standard MQTT over TCP
-- `mqtts://` - MQTT over SSL/TLS
-- `ws://` - MQTT over WebSocket
-- `wss://` - MQTT over Secure WebSocket
+1. **MQTT Client**: Maintains broker connection with automatic reconnection and last will testament
+2. **Scanner Manager**: Manages multiple USB HID barcode scanners with device monitoring
+3. **Home Assistant Integration**: Publishes device discovery messages and forwards barcode events
 
-## Development Workflow
+### Event Flow
 
-### Adding New Scanner Support
-1. Run `--list-devices` to identify device characteristics
-2. Add manufacturer/product patterns to `isLikelyBarcodeScanner()`
-3. Test auto-detection or provide configuration examples
-4. Update documentation with compatibility information
+1. Scanner Manager detects barcode scan from USB HID device
+2. Event is published through internal event system
+3. Home Assistant Integration receives event and publishes to MQTT
+4. Home Assistant automatically discovers and creates sensor entities
 
-### Configuration Changes
-1. Update structs in `pkg/config/config.go`
-2. Add validation in `validate()` method
-3. Set defaults in `setDefaults()` method
-4. Update `config.example.yaml` with documentation
-5. Pass new config to relevant components
+### Configuration Structure
 
-### MQTT Topics Structure
-- Discovery: `{prefix}/sensor/{entity_id}/config`
-- State: `{prefix}/sensor/{entity_id}/state`
-- Availability: `{prefix}/sensor/{entity_id}/availability`
+The application supports multiple scanner configurations through YAML:
 
-## Troubleshooting Development Issues
-
-### USB Permission Issues (Linux)
-```bash
-# Create udev rules for HID access
-sudo tee /etc/udev/rules.d/99-hid-barcode.rules > /dev/null << 'EOF'
-SUBSYSTEM=="hidraw", MODE="0666"
-KERNEL=="hidraw*", MODE="0666"
-EOF
-
-# Reload rules
-sudo udevadm control --reload-rules
-sudo udevadm trigger
+```yaml
+scanners:
+  scanner_id:  # Map key becomes scanner ID
+    name: "Friendly Name"
+    identification:
+      vendor_id: 0x60e    # USB VID (required)
+      product_id: 0x16c7  # USB PID (required)
+      serial: "ABC123"    # Optional for multiple identical devices
+    termination_char: "enter"  # Scan termination detection
 ```
 
-### Common Development Patterns
+### Key Design Patterns
 
-#### Adding New Configuration Options
-1. Add field to appropriate config struct
-2. Set default value in `setDefaults()`
-3. Add validation in `validate()` if needed
-4. Pass to component via constructor
-5. Update example configuration
+- **Service Management**: All major components implement a common service interface for lifecycle management
+- **Event-Driven Architecture**: Scanner events flow through handlers to appropriate services
+- **Configuration Mapping**: Scanner IDs come from YAML map keys, not device properties
+- **Graceful Shutdown**: Signal handling ensures clean service shutdown
+- **Multi-Device Support**: Single instance can manage multiple scanners simultaneously
 
-#### Testing Scanner Devices
-```bash
-# List all devices with detailed info
-sudo ./homeassistant-barcode-scanner --list-devices
+## Important Implementation Notes
 
-# Test with specific device
-# Update config.yaml with vendor_id/product_id or device_path
-./homeassistant-barcode-scanner --log-level debug
-```
+- Scanner IDs are derived from YAML configuration map keys, not hardware serials
+- MQTT topics include instance ID to support multiple application instances
+- Device reconnection is handled automatically with configurable retry delays
+- Home Assistant discovery messages are published on startup and device connection
+- The application uses Logrus for structured logging with configurable levels and formats
+- USB HID access requires appropriate permissions (udev rules on Linux)
 
-## Build and Release
+## Testing Approach
 
-### Local Development
-```bash
-go run . --config config.yaml --log-level debug
-```
-
-### Dependencies
-- `github.com/karalabe/hid` - USB HID device access
-- `github.com/eclipse/paho.mqtt.golang` - MQTT client
-- `github.com/sirupsen/logrus` - Structured logging
-- `github.com/urfave/cli/v3` - CLI framework
-- `gopkg.in/yaml.v3` - YAML configuration parsing
-
-## Security Considerations
-
-- Configuration files may contain MQTT credentials (excluded from git)
-- TLS certificate validation configurable for development vs production
-- USB device access requires elevated permissions on some systems
-- MQTT will messages ensure Home Assistant knows about disconnections
-
-## Future Enhancements
-
-- [ ] Add support for serial-based barcode scanners
-- [ ] Implement scanner configuration commands
-- [ ] Add metrics/health check endpoints
-- [ ] Support for multiple simultaneous scanners
-- [ ] WebUI for configuration and monitoring
+The project includes unit tests for core functionality. Run tests before committing changes. The CI pipeline runs both Go tests and YAML linting.

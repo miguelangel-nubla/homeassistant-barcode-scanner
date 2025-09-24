@@ -40,16 +40,22 @@ func NewClient(cfg *config.MQTTConfig, willTopic string, logger *logrus.Logger) 
 
 // buildClientOptions creates and configures MQTT client options
 func (c *Client) buildClientOptions() *mqtt.ClientOptions {
-	opts := mqtt.NewClientOptions()
-	opts.AddBroker(c.config.BrokerURL)
-	opts.SetClientID(c.config.ClientID)
-	opts.SetKeepAlive(time.Duration(c.config.KeepAlive) * time.Second)
-	opts.SetCleanSession(true)
-	opts.SetAutoReconnect(true)
-	opts.SetMaxReconnectInterval(30 * time.Second)
-	opts.SetConnectRetryInterval(5 * time.Second)
+	opts := mqtt.NewClientOptions().
+		AddBroker(c.config.BrokerURL).
+		SetClientID(c.config.ClientID).
+		SetKeepAlive(time.Duration(c.config.KeepAlive) * time.Second).
+		SetCleanSession(true).
+		SetAutoReconnect(true).
+		SetMaxReconnectInterval(60 * time.Second).
+		SetConnectRetryInterval(2 * time.Second).
+		SetConnectRetry(true).
+		SetConnectTimeout(10 * time.Second).
+		SetPingTimeout(5 * time.Second).
+		SetWriteTimeout(5 * time.Second).
+		SetOnConnectHandler(c.handleConnect).
+		SetConnectionLostHandler(c.handleDisconnect)
 
-	// Set credentials
+	// Credentials
 	if c.config.Username != "" {
 		opts.SetUsername(c.config.Username)
 		if c.config.Password != "" {
@@ -57,21 +63,17 @@ func (c *Client) buildClientOptions() *mqtt.ClientOptions {
 		}
 	}
 
-	// Configure TLS for secure connections
+	// TLS for secure connections
 	if c.config.IsSecure() {
 		opts.SetTLSConfig(&tls.Config{
-			InsecureSkipVerify: c.config.InsecureSkipVerify,
+			InsecureSkipVerify: c.config.InsecureSkipVerify, // #nosec G402 - configurable for dev environments
 		})
 	}
 
-	// Set will message
+	// Will message (retained for availability)
 	if c.willTopic != "" {
-		opts.SetWill(c.willTopic, "offline", c.config.QoS, c.config.Retained)
+		opts.SetWill(c.willTopic, "offline", c.config.QoS, true)
 	}
-
-	// Set handlers
-	opts.SetOnConnectHandler(c.handleConnect)
-	opts.SetConnectionLostHandler(c.handleDisconnect)
 
 	return opts
 }
@@ -86,6 +88,11 @@ func (c *Client) SetOnDisconnectCallback(callback func()) {
 	c.onDisconnect = callback
 }
 
+// Start starts the MQTT client (implements Service interface)
+func (c *Client) Start() error {
+	return c.Connect()
+}
+
 // Connect connects to the MQTT broker
 func (c *Client) Connect() error {
 	c.logger.Infof("Connecting to MQTT broker: %s", c.config.BrokerURL)
@@ -95,6 +102,12 @@ func (c *Client) Connect() error {
 		return fmt.Errorf("failed to connect to MQTT broker: %w", token.Error())
 	}
 
+	return nil
+}
+
+// Stop stops the MQTT client (implements Service interface)
+func (c *Client) Stop() error {
+	c.Disconnect()
 	return nil
 }
 
@@ -111,18 +124,51 @@ func (c *Client) Disconnect() {
 	c.setConnected(false)
 }
 
-// Publish publishes a message to the specified topic
-func (c *Client) Publish(topic, payload string, wait bool) error {
+// Publish publishes a message to the specified topic with retain flag
+func (c *Client) Publish(topic, payload string, retain bool) error {
 	if !c.IsConnected() {
+		c.logger.Debugf("MQTT not connected, cannot publish to %s", topic)
 		return fmt.Errorf("MQTT client is not connected")
 	}
 
 	c.logger.Debugf("Publishing to topic %s: %s", topic, payload)
 
-	token := c.client.Publish(topic, c.config.QoS, c.config.Retained, payload)
-	if wait {
-		token.Wait()
-		return token.Error()
+	token := c.client.Publish(topic, c.config.QoS, retain, payload)
+	token.Wait()
+	if err := token.Error(); err != nil {
+		c.logger.Errorf("Failed to publish to %s: %v", topic, err)
+		return err
+	}
+	c.logger.Debugf("Successfully published to %s", topic)
+
+	return nil
+}
+
+// PublishWithRetry publishes a message with retry logic for critical messages
+func (c *Client) PublishWithRetry(topic, payload string, maxRetries int, retryDelay time.Duration) error {
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if err := c.attemptPublish(topic, payload, attempt, maxRetries); err == nil {
+			return nil
+		}
+
+		if attempt < maxRetries {
+			c.logger.Debugf("Waiting %v before retry %d for topic %s", retryDelay, attempt+2, topic)
+			time.Sleep(retryDelay)
+		}
+	}
+
+	return fmt.Errorf("failed to publish to %s after %d attempts", topic, maxRetries+1)
+}
+
+func (c *Client) attemptPublish(topic, payload string, attempt, maxRetries int) error {
+	if !c.IsConnected() {
+		c.logger.Debugf("MQTT not connected during publish attempt %d/%d for topic %s", attempt+1, maxRetries+1, topic)
+		return fmt.Errorf("not connected")
+	}
+
+	if err := c.Publish(topic, payload, false); err != nil {
+		c.logger.Warnf("Publish attempt %d/%d failed for topic %s: %v", attempt+1, maxRetries+1, topic, err)
+		return err
 	}
 
 	return nil
@@ -147,7 +193,7 @@ func (c *Client) handleConnect(client mqtt.Client) {
 	c.logger.Info("MQTT client connected")
 	c.setConnected(true)
 
-	// Publish online status
+	// Publish online status (retained for will message)
 	if c.willTopic != "" {
 		if err := c.Publish(c.willTopic, "online", true); err != nil {
 			c.logger.Errorf("Failed to publish online status: %v", err)
@@ -163,6 +209,7 @@ func (c *Client) handleConnect(client mqtt.Client) {
 // handleDisconnect is called when the connection to the broker is lost
 func (c *Client) handleDisconnect(client mqtt.Client, err error) {
 	c.logger.Errorf("MQTT connection lost: %v", err)
+	c.logger.Info("MQTT client will attempt automatic reconnection...")
 	c.setConnected(false)
 
 	// Call user callback
