@@ -23,7 +23,8 @@ const (
 // HIDProcessor handles HID keyboard data processing
 type HIDProcessor struct {
 	terminationChar string
-	buffer          strings.Builder
+	buffer          []byte
+	bufferLen       int
 	onScan          func(string)
 	logger          *logrus.Logger
 	lastActivity    time.Time
@@ -34,6 +35,7 @@ func NewHIDProcessor(terminationChar string, logger *logrus.Logger) *HIDProcesso
 	return &HIDProcessor{
 		terminationChar: terminationChar,
 		logger:          logger,
+		buffer:          make([]byte, 256), // Pre-allocate buffer
 		lastActivity:    time.Now(),
 	}
 }
@@ -45,15 +47,12 @@ func (p *HIDProcessor) SetOnScanCallback(callback func(string)) {
 
 // ProcessData processes raw HID data and extracts characters
 func (p *HIDProcessor) ProcessData(data []byte) {
-	p.logger.Debugf("Processing HID data: %x (length: %d)", data, len(data))
 	if len(data) < 3 {
-		p.logger.Debug("HID data too short, ignoring")
 		return
 	}
 
 	// Process HID keyboard report: [modifier, reserved, key1-key6]
 	modifier := data[0]
-	p.logger.Debugf("HID modifier: 0x%02x", modifier)
 
 	for i := 2; i < min(len(data), 8); i++ {
 		keyCode := data[i]
@@ -61,63 +60,51 @@ func (p *HIDProcessor) ProcessData(data []byte) {
 			continue
 		}
 
-		p.logger.Debugf("Processing keyCode: 0x%02x (%d)", keyCode, keyCode)
-
 		// Check for termination key
 		if p.isTerminationKey(keyCode) {
-			p.logger.Debugf("Termination key detected (0x%02x), finalizing barcode", keyCode)
 			p.finalizeInput()
 			return
 		}
 
-		if char := p.keyCodeToChar(keyCode, modifier); char != 0 {
-			p.logger.Debugf("KeyCode 0x%02x -> character '%c' (0x%02x)", keyCode, char, char)
-			p.buffer.WriteByte(char)
+		if char := p.keyCodeToChar(keyCode, modifier); char != 0 && p.bufferLen < len(p.buffer)-1 {
+			p.buffer[p.bufferLen] = char
+			p.bufferLen++
 			p.lastActivity = time.Now()
-		} else {
-			p.logger.Debugf("KeyCode 0x%02x -> no character mapping", keyCode)
 		}
 	}
-	p.logger.Debugf("Current buffer after processing: '%s'", p.buffer.String())
 }
 
 // CheckTimeout checks if input should be finalized due to timeout
 func (p *HIDProcessor) CheckTimeout() {
 	const timeout = 100 * time.Millisecond
-	if p.buffer.Len() > 0 && time.Since(p.lastActivity) > timeout {
-		p.logger.Debugf("Timeout: finalizing barcode after %v idle, buffer: '%s'",
-			time.Since(p.lastActivity), p.buffer.String())
+	if p.bufferLen > 0 && time.Since(p.lastActivity) > timeout {
 		p.finalizeInput()
 	}
 }
 
 // Reset clears the current buffer
 func (p *HIDProcessor) Reset() {
-	p.buffer.Reset()
+	p.bufferLen = 0
 }
 
 // finalizeInput processes completed barcode input
 func (p *HIDProcessor) finalizeInput() {
-	rawBuffer := p.buffer.String()
-	barcode := strings.TrimSpace(rawBuffer)
-	p.logger.Debugf("Finalizing barcode input: raw='%s', trimmed='%s', length=%d",
-		rawBuffer, barcode, len(barcode))
-	p.buffer.Reset()
+	if p.bufferLen == 0 {
+		return
+	}
+
+	barcode := strings.TrimSpace(string(p.buffer[:p.bufferLen]))
+	p.bufferLen = 0
 
 	if barcode != "" && p.onScan != nil {
 		p.logger.Infof("Barcode scanned: %s", barcode)
 		p.onScan(barcode)
-	} else if barcode == "" {
-		p.logger.Debug("Empty barcode after trimming, ignoring")
-	} else {
-		p.logger.Warn("Barcode scanned but no callback set")
 	}
 }
 
 // isTerminationKey checks if the key code matches the configured termination character
 func (p *HIDProcessor) isTerminationKey(keyCode byte) bool {
 	termChar := strings.ToLower(p.terminationChar)
-	p.logger.Debugf("Checking termination key: keyCode=0x%02x, configured=%s", keyCode, termChar)
 
 	switch termChar {
 	case "enter", "return":
@@ -127,9 +114,7 @@ func (p *HIDProcessor) isTerminationKey(keyCode byte) bool {
 	case "none", "":
 		return false // Rely on timeout
 	default:
-		// Default to Enter key if unknown termination char specified
-		p.logger.Debugf("Unknown termination character '%s', defaulting to Enter", p.terminationChar)
-		return keyCode == hidKeyEnter
+		return keyCode == hidKeyEnter // Default to Enter
 	}
 }
 
