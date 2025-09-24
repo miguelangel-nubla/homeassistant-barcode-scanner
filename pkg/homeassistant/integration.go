@@ -72,7 +72,7 @@ type ScannerTopics struct {
 	AttributesTopic   string
 }
 
-// NewIntegration creates a new multi-scanner Home Assistant integration
+// NewIntegration creates a new Home Assistant integration
 func NewIntegration(
 	mqttClient *mqtt.Client,
 	haConfig *config.HomeAssistantConfig,
@@ -102,74 +102,75 @@ func NewIntegration(
 }
 
 // Start initializes the Home Assistant integration
-func (mi *Integration) Start() error {
-	mi.logger.Info("Starting Home Assistant multi-scanner integration")
+func (integration *Integration) Start() error {
+	integration.logger.Info("Starting Home Assistant integration")
 
 	// Set up MQTT callbacks
-	mi.mqtt.SetOnConnectCallback(mi.handleConnect)
-	mi.mqtt.SetOnDisconnectCallback(mi.handleDisconnect)
+	integration.mqtt.SetOnConnectCallback(integration.handleConnect)
+	integration.mqtt.SetOnDisconnectCallback(integration.handleDisconnect)
 
 	// If already connected, perform initial setup
-	if mi.mqtt.IsConnected() {
-		mi.handleConnect()
+	if integration.mqtt.IsConnected() {
+		integration.handleConnect()
 	}
 
 	return nil
 }
 
 // Stop shuts down the Home Assistant integration
-func (mi *Integration) Stop() error {
-	mi.logger.Info("Stopping Home Assistant multi-scanner integration")
+func (integration *Integration) Stop() error {
+	integration.logger.Info("Stopping Home Assistant integration")
 
-	// Publish offline status for all scanners and bridge
-	if mi.mqtt.IsConnected() {
-		for scannerID := range mi.scanners {
-			mi.logger.Debugf("Publishing offline status for scanner: %s", scannerID)
-			if err := mi.publishScannerAvailability(scannerID, "offline"); err != nil {
-				mi.logger.Errorf("Failed to publish offline status for scanner %s: %v", scannerID, err)
+	// Publish offline status for all scanners
+	if integration.mqtt.IsConnected() {
+		for scannerID := range integration.scanners {
+			if err := integration.publishScannerAvailability(scannerID, "offline"); err != nil {
+				integration.logger.WithField("scanner_id", scannerID).WithError(err).Error("Failed to publish offline status")
 			}
 		}
 
-		// Publish offline status for bridge entities
-		// Note: We don't publish offline status for bridge entities since availability
-		// is handled by Home Assistant when the bridge goes offline
+		// Publish offline status for bridge availability (for graceful shutdown)
+		// LWT only triggers on unexpected disconnections, so we need manual publish for graceful shutdown
+		if err := integration.publishBridgeAvailability("offline"); err != nil {
+			integration.logger.WithError(err).Error("Failed to publish bridge offline status")
+		}
 	}
 
 	return nil
 }
 
 // AddScanner registers a new scanner configuration
-func (mi *Integration) AddScanner(scannerID, scannerName string, scannerConfig *config.ScannerConfig) {
-	mi.logger.Infof("Registering scanner configuration: %s", scannerID)
+func (integration *Integration) AddScanner(scannerID, scannerName string, scannerConfig *config.ScannerConfig) {
+	integration.logger.Infof("Registering scanner configuration: %s", scannerID)
 
 	// Store scanner configuration for later use when hardware connects
-	mi.scannerConfigs[scannerID] = scannerConfig
-	mi.logger.Debugf("Stored config for scanner %s, will create HA device when hardware connects", scannerID)
+	integration.scannerConfigs[scannerID] = scannerConfig
+	integration.logger.Debugf("Stored config for scanner %s, will create HA device when hardware connects", scannerID)
 }
 
 // RemoveScanner removes a scanner from Home Assistant integration
-func (mi *Integration) RemoveScanner(scannerID string) {
-	mi.logger.Infof("Removing scanner from Home Assistant integration: %s", scannerID)
+func (integration *Integration) RemoveScanner(scannerID string) {
+	integration.logger.Infof("Removing scanner from Home Assistant integration: %s", scannerID)
 
-	if mi.mqtt.IsConnected() {
+	if integration.mqtt.IsConnected() {
 		// Publish offline status before removing
-		scanner := mi.scanners[scannerID]
+		scanner := integration.scanners[scannerID]
 		if scanner != nil {
-			if err := mi.publishScannerAvailability(scannerID, "offline"); err != nil {
-				mi.logger.Errorf("Failed to publish offline status for removed scanner %s: %v", scannerID, err)
+			if err := integration.publishScannerAvailability(scannerID, "offline"); err != nil {
+				integration.logger.Errorf("Failed to publish offline status for removed scanner %s: %v", scannerID, err)
 			}
 		}
 	}
 
-	delete(mi.scanners, scannerID)
-	delete(mi.scannerConfigs, scannerID)
+	delete(integration.scanners, scannerID)
+	delete(integration.scannerConfigs, scannerID)
 }
 
 // SetScannerDeviceInfo creates Home Assistant device when hardware scanner connects
-func (mi *Integration) SetScannerDeviceInfo(scannerID string, deviceInfo *hid.DeviceInfo) {
+func (integration *Integration) SetScannerDeviceInfo(scannerID string, deviceInfo *hid.DeviceInfo) {
 	// Verify scanner config exists (must exist from AddScanner)
-	if _, exists := mi.scannerConfigs[scannerID]; !exists {
-		mi.logger.Errorf("Scanner config %s not found, cannot create HA device", scannerID)
+	if _, exists := integration.scannerConfigs[scannerID]; !exists {
+		integration.logger.Errorf("Scanner config %s not found, cannot create HA device", scannerID)
 		return
 	}
 
@@ -189,14 +190,14 @@ func (mi *Integration) SetScannerDeviceInfo(scannerID string, deviceInfo *hid.De
 	}
 
 	// Create Home Assistant device entry NOW with real hardware details
-	bridgeID := mi.generateBridgeDeviceID()
-	scannerDeviceID := mi.generateScannerDeviceID(scannerID)
+	bridgeID := integration.generateBridgeDeviceID()
+	scannerDeviceID := integration.generateScannerDeviceID(scannerID)
 
 	scanner := &ScannerDevice{
 		ID:        scannerID,
 		Name:      displayName,
 		Connected: false, // Will be set by SetScannerConnected
-		Topics:    mi.generateScannerTopics(scannerID),
+		Topics:    integration.generateScannerTopics(scannerID),
 		DeviceInfo: &DeviceInfo{
 			Identifiers:  []string{scannerDeviceID},
 			Name:         displayName,
@@ -206,76 +207,72 @@ func (mi *Integration) SetScannerDeviceInfo(scannerID string, deviceInfo *hid.De
 		},
 	}
 
-	mi.scanners[scannerID] = scanner
+	integration.scanners[scannerID] = scanner
 
-	mi.logger.Infof("Created HA device for scanner %s: %s %s (VID:PID %04x:%04x)",
+	integration.logger.Infof("Created HA device for scanner %s: %s %s (VID:PID %04x:%04x)",
 		scannerID, deviceInfo.Manufacturer, deviceInfo.Product, deviceInfo.VendorID, deviceInfo.ProductID)
 
 	// Publish availability first (required for HA auto-discovery timing)
-	if mi.mqtt.IsConnected() {
+	if integration.mqtt.IsConnected() {
 		// Publish offline initially - will be updated by SetScannerConnected when actually connected
-		if err := mi.publishScannerAvailability(scannerID, "offline"); err != nil {
-			mi.logger.Errorf("Failed to publish initial availability for scanner %s: %v", scannerID, err)
+		if err := integration.publishScannerAvailability(scannerID, "offline"); err != nil {
+			integration.logger.Errorf("Failed to publish initial availability for scanner %s: %v", scannerID, err)
 		}
 
 		// Now publish discovery config after availability is set
-		if err := mi.publishScannerDiscoveryConfig(scannerID); err != nil {
-			mi.logger.Errorf("Failed to publish discovery config for scanner %s: %v", scannerID, err)
+		if err := integration.publishScannerDiscoveryConfig(scannerID); err != nil {
+			integration.logger.Errorf("Failed to publish discovery config for scanner %s: %v", scannerID, err)
 		}
 	}
 }
 
 // SetScannerConnected updates scanner connection state
-func (mi *Integration) SetScannerConnected(scannerID string, connected bool) error {
-	scanner, exists := mi.scanners[scannerID]
+func (integration *Integration) SetScannerConnected(scannerID string, connected bool) error {
+	scanner, exists := integration.scanners[scannerID]
 	if !exists {
 		return fmt.Errorf("scanner %s not found", scannerID)
 	}
 
-	// Topics are always available since they're created in AddScanner
-
 	scanner.Connected = connected
 
 	if connected {
-		mi.logger.Debugf("Scanner %s connected, publishing availability 'online' and state 'unknown'", scannerID)
-		if err := mi.publishScannerAvailability(scannerID, "online"); err != nil {
+		if err := integration.publishScannerAvailability(scannerID, "online"); err != nil {
 			return err
 		}
-		if err := mi.publishScannerState(scannerID, "unknown"); err != nil {
+		if err := integration.publishScannerState(scannerID, "unknown"); err != nil {
 			return err
 		}
 	} else {
-		mi.logger.Debugf("Scanner %s disconnected, publishing 'offline' availability", scannerID)
-		if err := mi.publishScannerAvailability(scannerID, "offline"); err != nil {
+		if err := integration.publishScannerAvailability(scannerID, "offline"); err != nil {
 			return err
 		}
 	}
 
 	// Update bridge entities
-	if err := mi.publishScannerSummary(); err != nil {
-		mi.logger.Errorf("Failed to update scanner summary: %v", err)
+	if err := integration.publishScannerSummary(); err != nil {
+		integration.logger.WithError(err).Error("Failed to update scanner summary")
 	}
-	if err := mi.publishDiagnostics(); err != nil {
-		mi.logger.Errorf("Failed to update diagnostics: %v", err)
+	if err := integration.publishDiagnostics(); err != nil {
+		integration.logger.WithError(err).Error("Failed to update diagnostics")
 	}
 	return nil
 }
 
 // PublishBarcode publishes a scanned barcode for a specific scanner
-func (mi *Integration) PublishBarcode(scannerID, barcode string) error {
-	scanner, exists := mi.scanners[scannerID]
+func (integration *Integration) PublishBarcode(scannerID, barcode string) error {
+	scanner, exists := integration.scanners[scannerID]
 	if !exists {
 		return fmt.Errorf("scanner %s not found", scannerID)
 	}
 
 	// Topics are always available
 
-	if !mi.mqtt.IsConnected() {
+	if !integration.mqtt.IsConnected() {
 		return fmt.Errorf("MQTT not connected")
 	}
 
 	// Publish barcode as sensor state
-	if err := mi.publishScannerState(scannerID, barcode); err != nil {
+	if err := integration.publishScannerState(scannerID, barcode); err != nil {
 		return err
 	}
 
@@ -289,20 +286,19 @@ func (mi *Integration) PublishBarcode(scannerID, barcode string) error {
 		return fmt.Errorf("failed to marshal attributes: %w", err)
 	}
 
-	if err := mi.mqtt.Publish(scanner.Topics.AttributesTopic, string(attributesJSON), false); err != nil {
+	if err := integration.mqtt.Publish(scanner.Topics.AttributesTopic, string(attributesJSON), false); err != nil {
 		return fmt.Errorf("failed to publish attributes: %w", err)
 	}
 
-	mi.logger.Debug("Barcode published successfully")
 	return nil
 }
 
 // generateBridgeDeviceID creates a unique bridge device identifier
-func (mi *Integration) generateBridgeDeviceID() string {
-	if mi.config.InstanceID != "" {
-		return fmt.Sprintf("ha-barcode-bridge-%s", mi.config.InstanceID)
+func (integration *Integration) generateBridgeDeviceID() string {
+	if integration.config.InstanceID != "" {
+		return fmt.Sprintf("ha-barcode-bridge-%s", integration.config.InstanceID)
 	}
-	// Use hostname as fallback for multi-machine support
+	// Use hostname as fallback for multiple machine support
 	hostname, err := os.Hostname()
 	if err != nil {
 		hostname = "unknown"
@@ -311,9 +307,9 @@ func (mi *Integration) generateBridgeDeviceID() string {
 }
 
 // GenerateBridgeAvailabilityTopic creates the bridge availability topic for MQTT will/testament
-func (mi *Integration) GenerateBridgeAvailabilityTopic() string {
-	bridgeID := mi.generateBridgeDeviceID()
-	return fmt.Sprintf("%s/sensor/%s/availability", mi.config.DiscoveryPrefix, bridgeID)
+func (integration *Integration) GenerateBridgeAvailabilityTopic() string {
+	bridgeID := integration.generateBridgeDeviceID()
+	return fmt.Sprintf("%s/sensor/%s/availability", integration.config.DiscoveryPrefix, bridgeID)
 }
 
 // GenerateBridgeAvailabilityTopic creates the bridge availability topic for MQTT will/testament
@@ -328,7 +324,7 @@ func generateBridgeDeviceID(haConfig *config.HomeAssistantConfig) string {
 	if haConfig.InstanceID != "" {
 		return fmt.Sprintf("ha-barcode-bridge-%s", haConfig.InstanceID)
 	}
-	// Use hostname as fallback for multi-machine support
+	// Use hostname as fallback for multiple machine support
 	hostname, err := os.Hostname()
 	if err != nil {
 		hostname = "unknown"
@@ -337,94 +333,94 @@ func generateBridgeDeviceID(haConfig *config.HomeAssistantConfig) string {
 }
 
 // generateScannerDeviceID creates a unique scanner device identifier based on configured ID
-func (mi *Integration) generateScannerDeviceID(scannerID string) string {
-	bridgeID := mi.generateBridgeDeviceID()
+func (integration *Integration) generateScannerDeviceID(scannerID string) string {
+	bridgeID := integration.generateBridgeDeviceID()
 	return fmt.Sprintf("%s-scanner-%s", bridgeID, scannerID)
 }
 
 // generateScannerTopics creates MQTT topics for a specific scanner based on configured ID
-func (mi *Integration) generateScannerTopics(scannerID string) *ScannerTopics {
-	bridgeID := mi.generateBridgeDeviceID()
+func (integration *Integration) generateScannerTopics(scannerID string) *ScannerTopics {
+	bridgeID := integration.generateBridgeDeviceID()
 	entityID := fmt.Sprintf("%s-scanner-%s", bridgeID, scannerID)
 
 	return &ScannerTopics{
-		ConfigTopic:       fmt.Sprintf("%s/sensor/%s/config", mi.config.DiscoveryPrefix, entityID),
-		StateTopic:        fmt.Sprintf("%s/sensor/%s/state", mi.config.DiscoveryPrefix, entityID),
-		AvailabilityTopic: fmt.Sprintf("%s/sensor/%s/availability", mi.config.DiscoveryPrefix, entityID),
-		AttributesTopic:   fmt.Sprintf("%s/sensor/%s/attributes", mi.config.DiscoveryPrefix, entityID),
+		ConfigTopic:       fmt.Sprintf("%s/sensor/%s/config", integration.config.DiscoveryPrefix, entityID),
+		StateTopic:        fmt.Sprintf("%s/sensor/%s/state", integration.config.DiscoveryPrefix, entityID),
+		AvailabilityTopic: fmt.Sprintf("%s/sensor/%s/availability", integration.config.DiscoveryPrefix, entityID),
+		AttributesTopic:   fmt.Sprintf("%s/sensor/%s/attributes", integration.config.DiscoveryPrefix, entityID),
 	}
 }
 
 // getScannerSummaryStatus returns scanner overview status
-func (mi *Integration) getScannerSummaryStatus() string {
-	connectedCount := mi.getConnectedScannerCount()
-	totalCount := len(mi.scanners)
+func (integration *Integration) getScannerSummaryStatus() string {
+	connectedCount := integration.getConnectedScannerCount()
+	totalCount := len(integration.scanners)
 
-	if totalCount == 0 {
-		return "no_scanners"
+	if connectedCount == 0 {
+		return "offline"
 	}
 	if connectedCount == totalCount {
-		return "ready"
+		return "online"
 	}
 	return "partial"
 }
 
 // getDiagnosticsStatus returns bridge health status
-func (mi *Integration) getDiagnosticsStatus() string {
+func (integration *Integration) getDiagnosticsStatus() string {
 	// For now, simple logic - can be expanded later
-	if mi.mqtt.IsConnected() {
+	if integration.mqtt.IsConnected() {
 		return "healthy"
 	}
 	return "error"
 }
 
 // handleConnect is called when MQTT connects
-func (mi *Integration) handleConnect() {
-	mi.logger.Info("MQTT connected, publishing bridge availability and discovery configs")
+func (integration *Integration) handleConnect() {
+	integration.logger.Info("MQTT connected, publishing bridge availability and discovery configs")
 
 	// Publish bridge availability first
-	if err := mi.publishBridgeAvailability("online"); err != nil {
-		mi.logger.Errorf("Failed to publish bridge availability: %v", err)
+	if err := integration.publishBridgeAvailability("online"); err != nil {
+		integration.logger.WithError(err).Error("Failed to publish bridge availability")
 	}
 
 	// Publish bridge entities availability and states
-	if err := mi.publishScannerSummary(); err != nil {
-		mi.logger.Errorf("Failed to update scanner summary: %v", err)
+	if err := integration.publishScannerSummary(); err != nil {
+		integration.logger.WithError(err).Error("Failed to update scanner summary")
 	}
-	if err := mi.publishDiagnostics(); err != nil {
-		mi.logger.Errorf("Failed to update diagnostics: %v", err)
+	if err := integration.publishDiagnostics(); err != nil {
+		integration.logger.WithError(err).Error("Failed to update diagnostics")
 	}
 
 	// Now publish bridge discovery configs after availability is set
-	if err := mi.publishScannerSummaryDiscoveryConfig(); err != nil {
-		mi.logger.Errorf("Failed to publish scanner summary discovery config: %v", err)
+	if err := integration.publishScannerSummaryDiscoveryConfig(); err != nil {
+		integration.logger.WithError(err).Error("Failed to publish scanner summary discovery config")
 	}
-	if err := mi.publishDiagnosticsDiscoveryConfig(); err != nil {
-		mi.logger.Errorf("Failed to publish diagnostics discovery config: %v", err)
+	if err := integration.publishDiagnosticsDiscoveryConfig(); err != nil {
+		integration.logger.WithError(err).Error("Failed to publish diagnostics discovery config")
 	}
 
 	// Publish discovery config for all scanners that exist (only connected hardware)
 	// Note: availability for individual scanners is already handled by SetScannerDeviceInfo/SetScannerConnected
-	for scannerID := range mi.scanners {
-		if err := mi.publishScannerDiscoveryConfig(scannerID); err != nil {
-			mi.logger.Errorf("Failed to publish discovery config for scanner %s: %v", scannerID, err)
+	for scannerID := range integration.scanners {
+		if err := integration.publishScannerDiscoveryConfig(scannerID); err != nil {
+			integration.logger.WithField("scanner_id", scannerID).WithError(err).Error("Failed to publish discovery config")
 		}
 	}
 }
 
 // handleDisconnect is called when MQTT disconnects
-func (mi *Integration) handleDisconnect() {
-	mi.logger.Warn("MQTT disconnected")
+func (integration *Integration) handleDisconnect() {
+	integration.logger.Warn("MQTT disconnected")
 }
 
 // publishScannerDiscoveryConfig publishes discovery configuration for a scanner
-func (mi *Integration) publishScannerDiscoveryConfig(scannerID string) error {
-	scanner, exists := mi.scanners[scannerID]
+func (integration *Integration) publishScannerDiscoveryConfig(scannerID string) error {
+	scanner, exists := integration.scanners[scannerID]
 	if !exists || scanner.DeviceInfo == nil {
 		return fmt.Errorf("scanner %s not found or device info not set", scannerID)
 	}
 
-	bridgeID := mi.generateBridgeDeviceID()
+	bridgeID := integration.generateBridgeDeviceID()
 
 	// Generate sensor name: use scanner friendly name if provided, otherwise use scanner ID
 	sensorName := scanner.Name
@@ -433,11 +429,11 @@ func (mi *Integration) publishScannerDiscoveryConfig(scannerID string) error {
 	}
 
 	// Extract base topic for tilde optimization
-	baseTopic := fmt.Sprintf("%s/sensor/%s-scanner-%s", mi.config.DiscoveryPrefix, bridgeID, scannerID)
+	baseTopic := fmt.Sprintf("%s/sensor/%s-scanner-%s", integration.config.DiscoveryPrefix, bridgeID, scannerID)
 
 	sensorConfig := SensorConfig{
 		Name:             sensorName,
-		ObjectID:         scannerID,
+		ObjectID:         fmt.Sprintf("%s_%s", integration.config.InstanceID, scannerID),
 		UniqueID:         fmt.Sprintf("%s-scanner-%s", bridgeID, scannerID),
 		TildeTopic:       baseTopic,
 		StateTopic:       "~/state",
@@ -448,7 +444,7 @@ func (mi *Integration) publishScannerDiscoveryConfig(scannerID string) error {
 				Topic: "~/availability",
 			},
 			{
-				Topic: mi.GenerateBridgeAvailabilityTopic(),
+				Topic: integration.GenerateBridgeAvailabilityTopic(),
 			},
 		},
 		AvailabilityMode: "all", // Both must be online for entity to be available
@@ -462,56 +458,59 @@ func (mi *Integration) publishScannerDiscoveryConfig(scannerID string) error {
 		return fmt.Errorf("failed to marshal discovery config: %w", err)
 	}
 
-	mi.logger.Debugf("Publishing scanner discovery config to: %s", scanner.Topics.ConfigTopic)
 	// Use retain=true for discovery configs so they persist for HA restarts
-	return mi.mqtt.Publish(scanner.Topics.ConfigTopic, string(configJSON), true)
+	return integration.mqtt.Publish(scanner.Topics.ConfigTopic, string(configJSON), true)
 }
 
 // publishBridgeAvailability publishes bridge availability status
-func (mi *Integration) publishBridgeAvailability(status string) error {
-	topic := mi.GenerateBridgeAvailabilityTopic()
-	mi.logger.Debugf("Publishing bridge availability: %s", status)
+func (integration *Integration) publishBridgeAvailability(status string) error {
+	topic := integration.GenerateBridgeAvailabilityTopic()
 	// Use retain=true for bridge availability messages so HA sees the last known status
-	return mi.mqtt.Publish(topic, status, true)
+	return integration.mqtt.Publish(topic, status, true)
 }
 
 // publishScannerAvailability publishes availability status for a scanner
-func (mi *Integration) publishScannerAvailability(scannerID, status string) error {
-	scanner, exists := mi.scanners[scannerID]
+func (integration *Integration) publishScannerAvailability(scannerID, status string) error {
+	scanner, exists := integration.scanners[scannerID]
 	if !exists {
 		return fmt.Errorf("scanner %s not found", scannerID)
 	}
 
-	mi.logger.Debugf("Publishing availability status for scanner %s: %s", scannerID, status)
 	// Use retain=true for availability messages so HA sees the last known status when subscribing
-	return mi.mqtt.Publish(scanner.Topics.AvailabilityTopic, status, true)
+	return integration.mqtt.Publish(scanner.Topics.AvailabilityTopic, status, true)
 }
 
 // publishScannerState publishes sensor state for a scanner
-func (mi *Integration) publishScannerState(scannerID, state string) error {
-	scanner, exists := mi.scanners[scannerID]
+func (integration *Integration) publishScannerState(scannerID, state string) error {
+	scanner, exists := integration.scanners[scannerID]
 	if !exists {
 		return fmt.Errorf("scanner %s not found", scannerID)
 	}
 
-	mi.logger.Debugf("Publishing sensor state for scanner %s: %s", scannerID, state)
-	return mi.mqtt.Publish(scanner.Topics.StateTopic, state, false)
+	return integration.mqtt.Publish(scanner.Topics.StateTopic, state, false)
+}
+
+// generateBridgeEntityTopics creates MQTT topics for bridge-level entities
+func (integration *Integration) generateBridgeEntityTopics(entityType string) (topics *ScannerTopics, baseTopic string) {
+	bridgeID := integration.generateBridgeDeviceID()
+	entityID := fmt.Sprintf("%s-%s", bridgeID, entityType)
+	baseTopic = fmt.Sprintf("%s/sensor/%s", integration.config.DiscoveryPrefix, entityID)
+
+	topics = &ScannerTopics{
+		ConfigTopic:       fmt.Sprintf("%s/config", baseTopic),
+		StateTopic:        fmt.Sprintf("%s/state", baseTopic),
+		AvailabilityTopic: fmt.Sprintf("%s/availability", baseTopic),
+		AttributesTopic:   fmt.Sprintf("%s/attributes", baseTopic),
+	}
+
+	return
 }
 
 // publishBridgeEntityDiscoveryConfig publishes discovery config for bridge-level entities
-func (mi *Integration) publishBridgeEntityDiscoveryConfig(entityType, name, icon string) error {
-	bridgeID := mi.generateBridgeDeviceID()
+func (integration *Integration) publishBridgeEntityDiscoveryConfig(entityType, name, icon string) error {
+	topics, baseTopic := integration.generateBridgeEntityTopics(entityType)
+	bridgeID := integration.generateBridgeDeviceID()
 	entityID := fmt.Sprintf("%s-%s", bridgeID, entityType)
-
-	topics := &ScannerTopics{
-		ConfigTopic:       fmt.Sprintf("%s/sensor/%s/config", mi.config.DiscoveryPrefix, entityID),
-		StateTopic:        fmt.Sprintf("%s/sensor/%s/state", mi.config.DiscoveryPrefix, entityID),
-		AvailabilityTopic: fmt.Sprintf("%s/sensor/%s/availability", mi.config.DiscoveryPrefix, entityID),
-		AttributesTopic:   fmt.Sprintf("%s/sensor/%s/attributes", mi.config.DiscoveryPrefix, entityID),
-	}
-
-	// Extract base topic for tilde optimization
-	baseTopic := fmt.Sprintf("%s/sensor/%s", mi.config.DiscoveryPrefix, entityID)
 
 	sensorConfig := SensorConfig{
 		Name:             name,
@@ -522,10 +521,10 @@ func (mi *Integration) publishBridgeEntityDiscoveryConfig(entityType, name, icon
 		// Bridge entities depend only on bridge availability
 		Availability: []AvailabilityConfig{
 			{
-				Topic: mi.GenerateBridgeAvailabilityTopic(),
+				Topic: integration.GenerateBridgeAvailabilityTopic(),
 			},
 		},
-		Device:      mi.bridgeDeviceInfo,
+		Device:      integration.bridgeDeviceInfo,
 		Icon:        icon,
 		ForceUpdate: false,
 	}
@@ -535,41 +534,35 @@ func (mi *Integration) publishBridgeEntityDiscoveryConfig(entityType, name, icon
 		return fmt.Errorf("failed to marshal %s discovery config: %w", entityType, err)
 	}
 
-	mi.logger.Debugf("Publishing %s discovery config to: %s", entityType, topics.ConfigTopic)
 	// Use retain=true for discovery configs so they persist for HA restarts
-	return mi.mqtt.Publish(topics.ConfigTopic, string(configJSON), true)
+	return integration.mqtt.Publish(topics.ConfigTopic, string(configJSON), true)
 }
 
 // publishScannerSummaryDiscoveryConfig publishes scanner summary discovery configuration
-func (mi *Integration) publishScannerSummaryDiscoveryConfig() error {
-	return mi.publishBridgeEntityDiscoveryConfig("scanners", "Scanner Summary", "mdi:barcode-scan")
+func (integration *Integration) publishScannerSummaryDiscoveryConfig() error {
+	return integration.publishBridgeEntityDiscoveryConfig("scanners", "Scanner Summary", "mdi:barcode-scan")
 }
 
 // publishDiagnosticsDiscoveryConfig publishes diagnostics discovery configuration
-func (mi *Integration) publishDiagnosticsDiscoveryConfig() error {
-	return mi.publishBridgeEntityDiscoveryConfig("diagnostics", "Diagnostics", "mdi:stethoscope")
+func (integration *Integration) publishDiagnosticsDiscoveryConfig() error {
+	return integration.publishBridgeEntityDiscoveryConfig("diagnostics", "Diagnostics", "mdi:stethoscope")
 }
 
 // publishScannerSummary publishes scanner summary status
-func (mi *Integration) publishScannerSummary() error {
-	bridgeID := mi.generateBridgeDeviceID()
-	entityID := fmt.Sprintf("%s-scanners", bridgeID)
-	stateTopic := fmt.Sprintf("%s/sensor/%s/state", mi.config.DiscoveryPrefix, entityID)
-	attributesTopic := fmt.Sprintf("%s/sensor/%s/attributes", mi.config.DiscoveryPrefix, entityID)
-
-	status := mi.getScannerSummaryStatus()
+func (integration *Integration) publishScannerSummary() error {
+	topics, _ := integration.generateBridgeEntityTopics("scanners")
+	status := integration.getScannerSummaryStatus()
 
 	// Publish state (availability handled by bridge availability)
-	mi.logger.Debugf("Publishing scanner summary: %s", status)
-	if err := mi.mqtt.Publish(stateTopic, status, false); err != nil {
+	if err := integration.mqtt.Publish(topics.StateTopic, status, false); err != nil {
 		return err
 	}
 
 	// Publish attributes
 	attributes := map[string]any{
-		"connected_scanners": mi.getConnectedScannerCount(),
-		"total_scanners":     len(mi.scanners),
-		"scanner_list":       mi.getScannerList(),
+		"connected_scanners": integration.getConnectedScannerCount(),
+		"total_scanners":     len(integration.scanners),
+		"scanner_list":       integration.getScannerList(),
 	}
 
 	attributesJSON, err := json.Marshal(attributes)
@@ -577,28 +570,23 @@ func (mi *Integration) publishScannerSummary() error {
 		return fmt.Errorf("failed to marshal scanner summary attributes: %w", err)
 	}
 
-	return mi.mqtt.Publish(attributesTopic, string(attributesJSON), false)
+	return integration.mqtt.Publish(topics.AttributesTopic, string(attributesJSON), false)
 }
 
 // publishDiagnostics publishes diagnostics
-func (mi *Integration) publishDiagnostics() error {
-	bridgeID := mi.generateBridgeDeviceID()
-	entityID := fmt.Sprintf("%s-diagnostics", bridgeID)
-	stateTopic := fmt.Sprintf("%s/sensor/%s/state", mi.config.DiscoveryPrefix, entityID)
-	attributesTopic := fmt.Sprintf("%s/sensor/%s/attributes", mi.config.DiscoveryPrefix, entityID)
-
-	status := mi.getDiagnosticsStatus()
+func (integration *Integration) publishDiagnostics() error {
+	topics, _ := integration.generateBridgeEntityTopics("diagnostics")
+	status := integration.getDiagnosticsStatus()
 
 	// Publish state (availability handled by bridge availability)
-	mi.logger.Debugf("Publishing diagnostics: %s", status)
-	if err := mi.mqtt.Publish(stateTopic, status, false); err != nil {
+	if err := integration.mqtt.Publish(topics.StateTopic, status, false); err != nil {
 		return err
 	}
 
 	// Publish attributes
 	attributes := map[string]any{
-		"version":      mi.version,
-		"config_count": len(mi.scannerConfigs),
+		"version":      integration.version,
+		"config_count": len(integration.scannerConfigs),
 	}
 
 	attributesJSON, err := json.Marshal(attributes)
@@ -606,22 +594,22 @@ func (mi *Integration) publishDiagnostics() error {
 		return fmt.Errorf("failed to marshal diagnostics attributes: %w", err)
 	}
 
-	return mi.mqtt.Publish(attributesTopic, string(attributesJSON), false)
+	return integration.mqtt.Publish(topics.AttributesTopic, string(attributesJSON), false)
 }
 
 // getScannerList returns a list of scanner IDs for attributes
-func (mi *Integration) getScannerList() []string {
-	scanners := make([]string, 0, len(mi.scanners))
-	for scannerID := range mi.scanners {
+func (integration *Integration) getScannerList() []string {
+	scanners := make([]string, 0, len(integration.scanners))
+	for scannerID := range integration.scanners {
 		scanners = append(scanners, scannerID)
 	}
 	return scanners
 }
 
 // getConnectedScannerCount returns the number of connected scanners
-func (mi *Integration) getConnectedScannerCount() int {
+func (integration *Integration) getConnectedScannerCount() int {
 	count := 0
-	for _, scanner := range mi.scanners {
+	for _, scanner := range integration.scanners {
 		if scanner.Connected {
 			count++
 		}

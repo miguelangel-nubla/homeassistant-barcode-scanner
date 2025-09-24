@@ -52,7 +52,7 @@ func (app *Application) Initialize() error {
 		return err
 	}
 
-	// Create Home Assistant multi-scanner integration with proper MQTT client
+	// Create Home Assistant integration with proper MQTT client
 	haManager := homeassistant.NewIntegration(
 		mqttClient,
 		&app.config.HomeAssistant,
@@ -61,12 +61,7 @@ func (app *Application) Initialize() error {
 	)
 
 	// Create scanner manager for multiple scanners
-	// Convert map to slice for scanner manager
-	var scannerConfigs []config.ScannerConfig
-	for _, cfg := range app.config.Scanners {
-		scannerConfigs = append(scannerConfigs, cfg)
-	}
-	scannerManager := scanner.NewScannerManager(scannerConfigs, app.logger)
+	scannerManager := scanner.NewScannerManagerFromMap(app.config.Scanners, app.logger)
 	scannerManager.SetReconnectDelay(5 * time.Second)
 
 	// Register scanners with Home Assistant integration

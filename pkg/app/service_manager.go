@@ -36,7 +36,7 @@ func NewServiceManager(logger *logrus.Logger) *ServiceManager {
 func (sm *ServiceManager) Register(name string, service Service) {
 	sm.services[name] = service
 	sm.order = append(sm.order, name)
-	sm.logger.Debugf("Registered service: %s", name)
+	sm.logger.WithField("service", name).Debug("Service registered")
 }
 
 // Get returns a service by name with type assertion
@@ -53,18 +53,24 @@ func (sm *ServiceManager) GetMQTTClient() *mqtt.Client {
 	if service == nil {
 		return nil
 	}
-	mqttClient, _ := service.(*mqtt.Client)
-	return mqttClient
+	if mqttClient, ok := service.(*mqtt.Client); ok {
+		return mqttClient
+	}
+	sm.logger.WithField("service", "mqtt").Error("Service type assertion failed")
+	return nil
 }
 
-// GetHomeAssistantIntegration returns the Home Assistant multi-integration service
+// GetHomeAssistantIntegration returns the Home Assistant integration service
 func (sm *ServiceManager) GetHomeAssistantIntegration() *homeassistant.Integration {
 	service := sm.Get("homeassistant")
 	if service == nil {
 		return nil
 	}
-	haIntegration, _ := service.(*homeassistant.Integration)
-	return haIntegration
+	if haIntegration, ok := service.(*homeassistant.Integration); ok {
+		return haIntegration
+	}
+	sm.logger.WithField("service", "homeassistant").Error("Service type assertion failed")
+	return nil
 }
 
 // GetScannerManager returns the scanner manager service
@@ -73,8 +79,11 @@ func (sm *ServiceManager) GetScannerManager() *scanner.ScannerManager {
 	if service == nil {
 		return nil
 	}
-	scannerManager, _ := service.(*scanner.ScannerManager)
-	return scannerManager
+	if scannerManager, ok := service.(*scanner.ScannerManager); ok {
+		return scannerManager
+	}
+	sm.logger.WithField("service", "scanner").Error("Service type assertion failed")
+	return nil
 }
 
 // StartAll starts all registered services in order
@@ -100,11 +109,12 @@ func (sm *ServiceManager) StartAll() error {
 		}
 
 		service := sm.services[name]
-		sm.logger.Infof("Starting service: %s", name)
+		logger := sm.logger.WithField("service", name)
+		logger.Info("Starting service")
 		if err := service.Start(); err != nil {
 			return fmt.Errorf("failed to start service %s: %w", name, err)
 		}
-		sm.logger.Infof("Service %s started successfully", name)
+		logger.Info("Service started")
 	}
 
 	sm.logger.Info("All services started successfully")
@@ -120,12 +130,13 @@ func (sm *ServiceManager) StopAll() error {
 		name := sm.order[i]
 		service := sm.services[name]
 
-		sm.logger.Infof("Stopping service: %s", name)
+		logger := sm.logger.WithField("service", name)
+		logger.Info("Stopping service")
 		if err := service.Stop(); err != nil {
-			sm.logger.Errorf("Error stopping service %s: %v", name, err)
+			logger.WithError(err).Error("Failed to stop service")
 			// Continue stopping other services
 		} else {
-			sm.logger.Infof("Service %s stopped successfully", name)
+			logger.Info("Service stopped")
 		}
 	}
 

@@ -97,7 +97,6 @@ func (p *HIDProcessor) finalizeInput() {
 	p.bufferLen = 0
 
 	if barcode != "" && p.onScan != nil {
-		p.logger.Infof("Barcode scanned: %s", barcode)
 		p.onScan(barcode)
 	}
 }
@@ -141,14 +140,73 @@ func (p *HIDProcessor) keyCodeToChar(keyCode, modifier byte) byte {
 		return '1' + keyCode - hidNumMin
 	}
 
-	// Symbol mappings
+	// Comprehensive symbol and special key mappings
 	symbols := map[byte][2]byte{
-		0x2C: {' ', ' '}, 0x2D: {'-', '_'}, 0x2E: {'=', '+'}, 0x2F: {'[', '{'},
-		0x30: {']', '}'}, 0x31: {'\\', '|'}, 0x33: {';', ':'}, 0x34: {'\'', '"'},
-		0x35: {'`', '~'}, 0x36: {',', '<'}, 0x37: {'.', '>'}, 0x38: {'/', '?'},
+		// Special keys
+		0x28: {'\n', '\n'}, // Enter key
+		0x29: {0x1B, 0x1B}, // Escape key (ESC character)
+		0x2A: {0x08, 0x08}, // Backspace
+		0x2B: {'\t', '\t'}, // Tab key
+		0x2C: {' ', ' '},   // Space key
+
+		// Symbol keys
+		0x2D: {'-', '_'},  // Minus/Underscore
+		0x2E: {'=', '+'},  // Equal/Plus
+		0x2F: {'[', '{'},  // Left bracket
+		0x30: {']', '}'},  // Right bracket
+		0x31: {'\\', '|'}, // Backslash/Pipe
+		0x32: {'#', '~'},  // Non-US Hash/Tilde (varies by layout)
+		0x33: {';', ':'},  // Semicolon/Colon
+		0x34: {'\'', '"'}, // Apostrophe/Quote
+		0x35: {'`', '~'},  // Grave accent/Tilde
+		0x36: {',', '<'},  // Comma/Less than
+		0x37: {'.', '>'},  // Period/Greater than
+		0x38: {'/', '?'},  // Slash/Question mark
+
+		// Function keys (as control characters or ignore)
+		0x3A: {0, 0}, // F1
+		0x3B: {0, 0}, // F2
+		0x3C: {0, 0}, // F3
+		0x3D: {0, 0}, // F4
+		0x3E: {0, 0}, // F5
+		0x3F: {0, 0}, // F6
+		0x40: {0, 0}, // F7
+		0x41: {0, 0}, // F8
+		0x42: {0, 0}, // F9
+		0x43: {0, 0}, // F10
+		0x44: {0, 0}, // F11
+		0x45: {0, 0}, // F12
+
+		// Arrow keys and other navigation (typically not in barcodes but should be handled)
+		0x4F: {0, 0}, // Right arrow
+		0x50: {0, 0}, // Left arrow
+		0x51: {0, 0}, // Down arrow
+		0x52: {0, 0}, // Up arrow
+
+		// Keypad numbers (when NumLock is on)
+		0x53: {0, 0},       // Num Lock
+		0x54: {'/', '/'},   // Keypad /
+		0x55: {'*', '*'},   // Keypad *
+		0x56: {'-', '-'},   // Keypad -
+		0x57: {'+', '+'},   // Keypad +
+		0x58: {'\n', '\n'}, // Keypad Enter
+		0x59: {'1', '1'},   // Keypad 1
+		0x5A: {'2', '2'},   // Keypad 2
+		0x5B: {'3', '3'},   // Keypad 3
+		0x5C: {'4', '4'},   // Keypad 4
+		0x5D: {'5', '5'},   // Keypad 5
+		0x5E: {'6', '6'},   // Keypad 6
+		0x5F: {'7', '7'},   // Keypad 7
+		0x60: {'8', '8'},   // Keypad 8
+		0x61: {'9', '9'},   // Keypad 9
+		0x62: {'0', '0'},   // Keypad 0
+		0x63: {'.', '.'},   // Keypad .
 	}
 
 	if chars, exists := symbols[keyCode]; exists {
+		if chars[0] == 0 {
+			return 0 // Ignore function keys and navigation keys
+		}
 		if shifted {
 			return chars[1]
 		}

@@ -12,6 +12,17 @@ import (
 	"github.com/miguelangel-nubla/homeassistant-barcode-scanner/pkg/config"
 )
 
+// MQTT client configuration constants
+const (
+	DefaultMaxReconnectInterval = 60 * time.Second
+	DefaultConnectRetryInterval = 2 * time.Second
+	DefaultConnectTimeout       = 10 * time.Second
+	DefaultPingTimeout          = 5 * time.Second
+	DefaultWriteTimeout         = 5 * time.Second
+	DefaultWaitForConnTimeout   = 100 * time.Millisecond
+	DefaultDisconnectTimeout    = 250 // milliseconds
+)
+
 // Client represents an MQTT client with auto-reconnection capabilities
 type Client struct {
 	client       mqtt.Client
@@ -46,12 +57,12 @@ func (c *Client) buildClientOptions() *mqtt.ClientOptions {
 		SetKeepAlive(time.Duration(c.config.KeepAlive) * time.Second).
 		SetCleanSession(true).
 		SetAutoReconnect(true).
-		SetMaxReconnectInterval(60 * time.Second).
-		SetConnectRetryInterval(2 * time.Second).
+		SetMaxReconnectInterval(DefaultMaxReconnectInterval).
+		SetConnectRetryInterval(DefaultConnectRetryInterval).
 		SetConnectRetry(true).
-		SetConnectTimeout(10 * time.Second).
-		SetPingTimeout(5 * time.Second).
-		SetWriteTimeout(5 * time.Second).
+		SetConnectTimeout(DefaultConnectTimeout).
+		SetPingTimeout(DefaultPingTimeout).
+		SetWriteTimeout(DefaultWriteTimeout).
 		SetOnConnectHandler(c.handleConnect).
 		SetConnectionLostHandler(c.handleDisconnect)
 
@@ -115,31 +126,25 @@ func (c *Client) Stop() error {
 func (c *Client) Disconnect() {
 	c.logger.Info("Disconnecting from MQTT broker")
 
-	// Publish offline status before disconnecting
-	if c.willTopic != "" && c.IsConnected() {
-		_ = c.Publish(c.willTopic, "offline", true)
-	}
-
-	c.client.Disconnect(250)
+	c.client.Disconnect(DefaultDisconnectTimeout)
 	c.setConnected(false)
 }
 
 // Publish publishes a message to the specified topic with retain flag
 func (c *Client) Publish(topic, payload string, retain bool) error {
 	if !c.IsConnected() {
-		c.logger.Debugf("MQTT not connected, cannot publish to %s", topic)
 		return fmt.Errorf("MQTT client is not connected")
 	}
-
-	c.logger.Debugf("Publishing to topic %s: %s", topic, payload)
 
 	token := c.client.Publish(topic, c.config.QoS, retain, payload)
 	token.Wait()
 	if err := token.Error(); err != nil {
-		c.logger.Errorf("Failed to publish to %s: %v", topic, err)
+		c.logger.WithFields(map[string]interface{}{
+			"topic":  topic,
+			"retain": retain,
+		}).WithError(err).Error("MQTT publish failed")
 		return err
 	}
-	c.logger.Debugf("Successfully published to %s", topic)
 
 	return nil
 }
@@ -152,7 +157,6 @@ func (c *Client) PublishWithRetry(topic, payload string, maxRetries int, retryDe
 		}
 
 		if attempt < maxRetries {
-			c.logger.Debugf("Waiting %v before retry %d for topic %s", retryDelay, attempt+2, topic)
 			time.Sleep(retryDelay)
 		}
 	}
@@ -162,12 +166,16 @@ func (c *Client) PublishWithRetry(topic, payload string, maxRetries int, retryDe
 
 func (c *Client) attemptPublish(topic, payload string, attempt, maxRetries int) error {
 	if !c.IsConnected() {
-		c.logger.Debugf("MQTT not connected during publish attempt %d/%d for topic %s", attempt+1, maxRetries+1, topic)
 		return fmt.Errorf("not connected")
 	}
 
 	if err := c.Publish(topic, payload, false); err != nil {
-		c.logger.Warnf("Publish attempt %d/%d failed for topic %s: %v", attempt+1, maxRetries+1, topic, err)
+		if attempt == maxRetries {
+			c.logger.WithFields(map[string]interface{}{
+				"topic":    topic,
+				"attempts": maxRetries + 1,
+			}).WithError(err).Error("MQTT publish failed after all retries")
+		}
 		return err
 	}
 
@@ -225,7 +233,7 @@ func (c *Client) WaitForConnection(timeout time.Duration) error {
 		if c.IsConnected() {
 			return nil
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(DefaultWaitForConnTimeout)
 	}
 	return fmt.Errorf("timeout waiting for MQTT connection")
 }

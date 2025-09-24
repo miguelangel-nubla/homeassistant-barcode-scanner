@@ -32,6 +32,15 @@ func NewScannerManager(configs []config.ScannerConfig, logger *logrus.Logger) *S
 	}
 }
 
+// NewScannerManagerFromMap creates a new scanner manager from a map of scanner configs
+func NewScannerManagerFromMap(configMap map[string]config.ScannerConfig, logger *logrus.Logger) *ScannerManager {
+	configs := make([]config.ScannerConfig, 0, len(configMap))
+	for _, cfg := range configMap {
+		configs = append(configs, cfg)
+	}
+	return NewScannerManager(configs, logger)
+}
+
 // SetOnScanCallback sets the callback for barcode scan events
 func (sm *ScannerManager) SetOnScanCallback(callback func(scannerID, barcode string)) {
 	sm.onScanCallback = callback

@@ -115,7 +115,7 @@ scanners:
 - **Event-Driven Architecture**: Scanner events flow through handlers to appropriate services
 - **Configuration Mapping**: Scanner IDs come from YAML map keys, not device properties
 - **Graceful Shutdown**: Signal handling ensures clean service shutdown
-- **Multi-Device Support**: Single instance can manage multiple scanners simultaneously
+- **Multiple Device Support**: Single instance can manage multiple scanners simultaneously
 
 ## Important Implementation Notes
 

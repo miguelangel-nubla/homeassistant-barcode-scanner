@@ -229,60 +229,80 @@ func (s *BarcodeScanner) isTargetDevice(deviceInfo *hid.DeviceInfo) bool {
 
 // runReadLoop runs the main read loop for the connected device
 func (s *BarcodeScanner) runReadLoop() {
-	buffer := make([]byte, 64)
-	timeoutTicker := time.NewTicker(10 * time.Millisecond)
+	const bufferSize = 64
+	const tickerInterval = 10 * time.Millisecond
+
+	timeoutTicker := time.NewTicker(tickerInterval)
 	defer timeoutTicker.Stop()
+
+	// Channel to receive HID data from read goroutine
+	dataChan := make(chan []byte, 10)
+	errorChan := make(chan error, 1)
+
+	// Start the HID read goroutine
+	go s.hidReadGoroutine(dataChan, errorChan, bufferSize)
 
 	for {
 		select {
 		case <-s.ctx.Done():
 			return
+
 		case <-timeoutTicker.C:
+			// Check timeout on every ticker
 			s.hidProcessor.CheckTimeout()
-		default:
-			if !s.readFromDevice(buffer) {
-				s.disconnect()
-				return
+
+		case data := <-dataChan:
+			// Process received HID data
+			if len(data) > 0 && !s.isAllZeros(data) {
+				s.hidProcessor.ProcessData(data)
 			}
+
+		case err := <-errorChan:
+			// Handle read errors
+			s.logger.Debugf("HID read error: %v", err)
+			s.disconnect()
+			return
 		}
 	}
 }
 
-// readFromDevice reads data from the HID device
-func (s *BarcodeScanner) readFromDevice(buffer []byte) bool {
-	s.mutex.RLock()
-	device := s.device
-	s.mutex.RUnlock()
+// hidReadGoroutine runs in a separate goroutine to read HID data
+func (s *BarcodeScanner) hidReadGoroutine(dataChan chan<- []byte, errorChan chan<- error, bufferSize int) {
+	buffer := make([]byte, bufferSize)
 
-	if device == nil {
-		return false
-	}
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		default:
+			s.mutex.RLock()
+			device := s.device
+			s.mutex.RUnlock()
 
-	// Set read timeout
-	ctx, cancel := context.WithTimeout(s.ctx, 100*time.Millisecond)
-	defer cancel()
+			if device == nil {
+				errorChan <- fmt.Errorf("device is nil")
+				return
+			}
 
-	done := make(chan struct{})
-	var n int
-	var err error
+			n, err := device.Read(buffer)
+			if err != nil {
+				// Check if it's a timeout error, which is normal
+				if err.Error() == "hid: read timeout" || err.Error() == "hid: timeout" {
+					// Timeout is normal, continue reading
+					continue
+				}
+				// Real error occurred
+				errorChan <- err
+				return
+			}
 
-	go func() {
-		n, err = device.Read(buffer)
-		close(done)
-	}()
-
-	select {
-	case <-ctx.Done():
-		return true // Timeout, continue
-	case <-done:
-		if err != nil {
-			s.logger.Debugf("Device read error: %v", err)
-			return false // Disconnect
+			if n > 0 {
+				// Copy the data to send on channel
+				data := make([]byte, n)
+				copy(data, buffer[:n])
+				dataChan <- data
+			}
 		}
-		if n > 0 && !s.isAllZeros(buffer[:n]) {
-			s.hidProcessor.ProcessData(buffer[:n])
-		}
-		return true
 	}
 }
 

@@ -143,32 +143,32 @@ func (c *CLI) setupSignalHandling() <-chan struct{} {
 func (c *CLI) listDevices() error {
 	allDevices := scanner.ListAllDevices()
 	if len(allDevices) == 0 {
-		c.logger.Warn("No HID devices found - check permissions or udev rules")
+		fmt.Println("No HID devices found - check permissions or udev rules")
 		return nil
 	}
 
-	c.logger.Infof("Found %d HID device(s):", len(allDevices))
-	c.logger.Info("\nUse these details to configure your scanners:")
-	c.logger.Info("Configuration format:")
-	c.logger.Info("scanners:")
-	c.logger.Info("  - id: \"scanner1\"")
-	c.logger.Info("    identification:")
-	c.logger.Info("      usb_device:")
-	c.logger.Info("        vendor_id: 0xVVVV")
-	c.logger.Info("        product_id: 0xPPPP")
-	c.logger.Info("        serial: \"SERIAL\" # optional, for multiple identical devices")
-	c.logger.Info("      # OR for direct device path:")
-	c.logger.Info("      # device_path: \"/dev/hidraw0\"")
-	c.logger.Info("")
+	fmt.Printf("Found %d HID device(s):\n\n", len(allDevices))
+	fmt.Println("Use these details to configure your scanners:")
+	fmt.Println("Configuration format:")
+	fmt.Println("scanners:")
+	fmt.Println("  - id: \"scanner1\"")
+	fmt.Println("    identification:")
+	fmt.Println("      usb_device:")
+	fmt.Println("        vendor_id: 0xVVVV")
+	fmt.Println("        product_id: 0xPPPP")
+	fmt.Println("        serial: \"SERIAL\" # optional, for multiple identical devices")
+	fmt.Println("      # OR for direct device path:")
+	fmt.Println("      # device_path: \"/dev/hidraw0\"")
+	fmt.Println("")
 
 	for i, device := range allDevices {
-		c.logger.Infof("%d. %s (%s)", i+1, device.Product, device.Manufacturer)
-		c.logger.Infof("   VID:PID: %04x:%04x", device.VendorID, device.ProductID)
+		fmt.Printf("%d. %s (%s)\n", i+1, device.Product, device.Manufacturer)
+		fmt.Printf("   VID:PID: %04x:%04x\n", device.VendorID, device.ProductID)
 		if device.Serial != "" {
-			c.logger.Infof("   Serial: %s", device.Serial)
+			fmt.Printf("   Serial: %s\n", device.Serial)
 		}
-		c.logger.Infof("   Device Path: %s", device.Path)
-		c.logger.Info("")
+		fmt.Printf("   Device Path: %s\n", device.Path)
+		fmt.Println("")
 	}
 
 	return nil
