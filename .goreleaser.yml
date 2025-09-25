@@ -7,29 +7,9 @@ env:
   - REGISTRY=ghcr.io
   - IMAGE=miguelangel-nubla/homeassistant-barcode-scanner
 builds:
-  - id: homeassistant-barcode-scanner-linux
+  - id: homeassistant-barcode-scanner
     goos:
       - linux
-    goarch:
-      - amd64
-      - arm64
-    flags:
-      - -trimpath
-    tags:
-      - netgo
-    ldflags:
-      - -s
-      - -w
-      - -extldflags="-static"
-      - -X '{{ .ModulePath }}/pkg/common.SUMMARY=v{{ .Version }}'
-      - -X '{{ .ModulePath }}/pkg/common.BRANCH={{ .Branch }}'
-      - -X '{{ .ModulePath }}/pkg/common.VERSION={{ .Tag }}'
-      - -X '{{ .ModulePath }}/pkg/common.COMMIT={{ .Commit }}'
-    mod_timestamp: '{{ .CommitTimestamp }}'
-    env:
-      - CGO_ENABLED=1
-  - id: homeassistant-barcode-scanner-others
-    goos:
       - windows
       - darwin
     goarch:
@@ -42,14 +22,14 @@ builds:
     ldflags:
       - -s
       - -w
-      - -extldflags="-static"
+      # Static linking removed: -extldflags="-static" incompatible with CGO
       - -X '{{ .ModulePath }}/pkg/common.SUMMARY=v{{ .Version }}'
       - -X '{{ .ModulePath }}/pkg/common.BRANCH={{ .Branch }}'
       - -X '{{ .ModulePath }}/pkg/common.VERSION={{ .Tag }}'
       - -X '{{ .ModulePath }}/pkg/common.COMMIT={{ .Commit }}'
     mod_timestamp: '{{ .CommitTimestamp }}'
     env:
-      - CGO_ENABLED=0
+      - CGO_ENABLED=1  # Required for USB HID library support
   # hooks:
   #   post:
   #   - cmd: |
