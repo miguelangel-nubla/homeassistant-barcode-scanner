@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
   push:
     branches:
-    - main
-    - next
+      - main
+      - next
     tags:
-    - "*"
+      - "*"
   release:
     types:
-    - published
+      - published
 
 permissions:
   contents: write
@@ -21,82 +21,88 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-      if: github.event_name == 'pull_request'
-      with:
-        fetch-depth: 0
-        ref: ${{ github.event.pull_request.head.ref }}
-    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-      if: github.event_name != 'pull_request'
-      with:
-        fetch-depth: 0
-    - name: setup-go
-      uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6
-      with:
-        go-version: 1.25.x
-    - uses: anchore/sbom-action/download-syft@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
-    - name: setup qemu
-      id: qemu
-      uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3
-    - name: setup docker buildx
-      id: buildx
-      uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3
-    - name: Login to GitHub Container Registry
-      uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3
-      with:
-        registry: ghcr.io
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-    - name: install cosign
-      uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
-    # - name: install quill
-    #   env:
-    #     QUILL_VERSION: 0.4.1
-    #   run: |
-    #     curl -Lo /tmp/quill_${QUILL_VERSION}_linux_amd64.tar.gz https://github.com/anchore/quill/releases/download/v${QUILL_VERSION}/quill_${QUILL_VERSION}_linux_amd64.tar.gz
-    #     tar -xvf /tmp/quill_${QUILL_VERSION}_linux_amd64.tar.gz -C /tmp
-    #     mv /tmp/quill /usr/local/bin/quill
-    #     chmod +x /usr/local/bin/quill
-    - name: set goreleaser default args
-      if: startsWith(github.ref, 'refs/tags/') == true
-      run: |
-        echo "GORELEASER_ARGS=" >> $GITHUB_ENV
-    - name: set goreleaser args for branch
-      if: startsWith(github.ref, 'refs/tags/') == false
-      run: |
-        echo "GORELEASER_ARGS=--snapshot" >> $GITHUB_ENV
-    - name: set goreleaser args renovate
-      if: startsWith(github.ref, 'refs/heads/renovate') == true
-      run: |
-        echo "GORELEASER_ARGS=--snapshot --skip publish --skip sign" >> $GITHUB_ENV
-    # - name: setup-quill
-    #   uses: 1password/load-secrets-action@13f58eec611f8e5db52ec16247f58c508398f3e6 # v3
-    #   # Extra Safeguard - This ensures the secrets are only loaded on tag and a tag that the repo owner triggered
-    #   if: startsWith(github.ref, 'refs/tags/') == true && github.actor == github.repository_owner
-    #   with:
-    #     export-env: true
-    #   env:
-    #     OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-    #     QUILL_NOTARY_KEY: ${{ secrets.OP_QUILL_NOTARY_KEY }}
-    #     QUILL_NOTARY_KEY_ID: ${{ secrets.OP_QUILL_NOTARY_KEY_ID }}
-    #     QUILL_NOTARY_ISSUER: ${{ secrets.OP_QUILL_NOTARY_ISSUER }}
-    #     QUILL_SIGN_PASSWORD: ${{ secrets.OP_QUILL_SIGN_PASSWORD }}
-    #     QUILL_SIGN_P12: ${{ secrets.OP_QUILL_SIGN_P12 }}
-    - name: run goreleaser
-      uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
-      with:
-        distribution: goreleaser
-        version: latest
-        args: release --clean ${{ env.GORELEASER_ARGS }}
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    - name: push docker images (for branches)
-      if: github.ref == 'refs/heads/main' || github.event.pull_request.base.ref == 'main'
-      run: |
-        docker images --format "{{.Repository}}:{{.Tag}}" | grep "${{ github.repository }}" | xargs -L1 docker push
-    - name: upload artifacts
-      if: github.event.pull_request.base.ref == 'main'
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-      with:
-        name: binaries
-        path: releases/*.tar.gz
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.ref }}
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        if: github.event_name != 'pull_request'
+        with:
+          fetch-depth: 0
+      - name: setup-go
+        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6
+        with:
+          go-version: 1.25.x
+      - uses: anchore/sbom-action/download-syft@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
+      - name: setup qemu
+        id: qemu
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3
+      - name: setup docker buildx
+        id: buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: install cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+      # - name: install quill
+      #   env:
+      #     QUILL_VERSION: 0.4.1
+      #   run: |
+      #     curl -Lo /tmp/quill_${QUILL_VERSION}_linux_amd64.tar.gz \
+      #       https://github.com/anchore/quill/releases/download/v${QUILL_VERSION}/\
+      #       quill_${QUILL_VERSION}_linux_amd64.tar.gz
+      #     tar -xvf /tmp/quill_${QUILL_VERSION}_linux_amd64.tar.gz -C /tmp
+      #     mv /tmp/quill /usr/local/bin/quill
+      #     chmod +x /usr/local/bin/quill
+      - name: install cross-compilation toolchains
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+      - name: set goreleaser default args
+        if: startsWith(github.ref, 'refs/tags/') == true
+        run: |
+          echo "GORELEASER_ARGS=" >> $GITHUB_ENV
+      - name: set goreleaser args for branch
+        if: startsWith(github.ref, 'refs/tags/') == false
+        run: |
+          echo "GORELEASER_ARGS=--snapshot" >> $GITHUB_ENV
+      - name: set goreleaser args renovate
+        if: startsWith(github.ref, 'refs/heads/renovate') == true
+        run: |
+          echo "GORELEASER_ARGS=--snapshot --skip publish --skip sign" >> $GITHUB_ENV
+      # - name: setup-quill
+      #   uses: 1password/load-secrets-action@13f58eec611f8e5db52ec16247f58c508398f3e6 # v3
+      #   # Extra Safeguard - This ensures the secrets are only loaded on tag and a tag that the repo owner triggered
+      #   if: startsWith(github.ref, 'refs/tags/') == true && github.actor == github.repository_owner
+      #   with:
+      #     export-env: true
+      #   env:
+      #     OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+      #     QUILL_NOTARY_KEY: ${{ secrets.OP_QUILL_NOTARY_KEY }}
+      #     QUILL_NOTARY_KEY_ID: ${{ secrets.OP_QUILL_NOTARY_KEY_ID }}
+      #     QUILL_NOTARY_ISSUER: ${{ secrets.OP_QUILL_NOTARY_ISSUER }}
+      #     QUILL_SIGN_PASSWORD: ${{ secrets.OP_QUILL_SIGN_PASSWORD }}
+      #     QUILL_SIGN_P12: ${{ secrets.OP_QUILL_SIGN_P12 }}
+      - name: run goreleaser
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean ${{ env.GORELEASER_ARGS }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: push docker images (for branches)
+        if: github.ref == 'refs/heads/main' || github.event.pull_request.base.ref == 'main'
+        run: |
+          docker images --format "{{.Repository}}:{{.Tag}}" | grep "${{ github.repository }}" | xargs -L1 docker push
+      - name: upload artifacts
+        if: github.event.pull_request.base.ref == 'main'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: binaries
+          path: releases/*.tar.gz
