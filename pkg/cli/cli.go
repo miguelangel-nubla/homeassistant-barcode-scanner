@@ -62,7 +62,19 @@ func (c *CLI) runApp(ctx context.Context, cmd *cli.Command) error {
 		return c.listDevices()
 	}
 
-	cfg, err := config.LoadConfig(cmd.String("config"))
+	// If no config file exists at default location and no explicit config provided,
+	// show help instead of failing
+	configPath := cmd.String("config")
+	if !cmd.IsSet("config") && configPath == "config.yaml" {
+		if _, err := os.Stat(configPath); os.IsNotExist(err) {
+			if helpErr := cli.ShowAppHelp(cmd); helpErr != nil {
+				return fmt.Errorf("failed to show help: %w", helpErr)
+			}
+			return fmt.Errorf("no configuration found - create config.yaml or specify with --config")
+		}
+	}
+
+	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
 		return fmt.Errorf("configuration error: %w", err)
 	}
