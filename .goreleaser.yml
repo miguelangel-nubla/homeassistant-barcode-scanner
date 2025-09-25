@@ -17,6 +17,8 @@ builds:
       - arm64
     flags:
       - -trimpath
+    tags:
+      - netgo
     ldflags:
       - -s
       - -w
