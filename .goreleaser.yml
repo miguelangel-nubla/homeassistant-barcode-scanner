@@ -7,9 +7,29 @@ env:
   - REGISTRY=ghcr.io
   - IMAGE=miguelangel-nubla/homeassistant-barcode-scanner
 builds:
-  - id: homeassistant-barcode-scanner
+  - id: homeassistant-barcode-scanner-linux
     goos:
       - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    tags:
+      - netgo
+    ldflags:
+      - -s
+      - -w
+      - -extldflags="-static"
+      - -X '{{ .ModulePath }}/pkg/common.SUMMARY=v{{ .Version }}'
+      - -X '{{ .ModulePath }}/pkg/common.BRANCH={{ .Branch }}'
+      - -X '{{ .ModulePath }}/pkg/common.VERSION={{ .Tag }}'
+      - -X '{{ .ModulePath }}/pkg/common.COMMIT={{ .Commit }}'
+    mod_timestamp: '{{ .CommitTimestamp }}'
+    env:
+      - CGO_ENABLED=1
+  - id: homeassistant-barcode-scanner-others
+    goos:
       - windows
       - darwin
     goarch:
@@ -29,7 +49,7 @@ builds:
       - -X '{{ .ModulePath }}/pkg/common.COMMIT={{ .Commit }}'
     mod_timestamp: '{{ .CommitTimestamp }}'
     env:
-      - CGO_ENABLED=1
+      - CGO_ENABLED=0
   # hooks:
   #   post:
   #   - cmd: |
@@ -45,7 +65,8 @@ sboms:
 archives:
   - id: homeassistant-barcode-scanner
     builds:
-      - homeassistant-barcode-scanner
+      - homeassistant-barcode-scanner-linux
+      - homeassistant-barcode-scanner-others
     name_template: "{{ .ProjectName }}-v{{ .Version }}-{{ .Os }}-{{ .Arch }}{{ .Arm }}"
     format_overrides:
       - goos: windows
@@ -53,7 +74,7 @@ archives:
 dockers:
   - id: linux-amd64
     ids:
-      - homeassistant-barcode-scanner
+      - homeassistant-barcode-scanner-linux
     use: buildx
     goos: linux
     goarch: amd64
@@ -78,7 +99,7 @@ dockers:
 
   - id: linux-arm64
     ids:
-      - homeassistant-barcode-scanner
+      - homeassistant-barcode-scanner-linux
     use: buildx
     goos: linux
     goarch: arm64
