@@ -225,7 +225,7 @@ func (c *Config) validateKeyboardLayout(id string, scanner *ScannerConfig) error
 }
 
 func getAvailableKeyboardLayouts() ([]string, error) {
-	layoutsDir := "pkg/scanner/layouts"
+	layoutsDir := "../scanner/layouts"
 	entries, err := os.ReadDir(layoutsDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read layouts directory %s: %w", layoutsDir, err)

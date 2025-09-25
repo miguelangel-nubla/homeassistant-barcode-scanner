@@ -32,7 +32,7 @@ type SensorConfig struct {
 	UniqueID          string               `json:"unique_id"`
 	TildeTopic        string               `json:"~,omitempty"`
 	StateTopic        string               `json:"state_topic"`
-	AttributesToopic  string               `json:"json_attributes_topic,omitempty"`
+	AttributesTopic   string               `json:"json_attributes_topic,omitempty"`
 	AvailabilityTopic string               `json:"availability_topic,omitempty"`
 	Availability      []AvailabilityConfig `json:"availability,omitempty"`
 	AvailabilityMode  string               `json:"availability_mode,omitempty"`
@@ -389,12 +389,12 @@ func (integration *Integration) publishScannerDiscoveryConfig(scannerID string) 
 	baseTopic := fmt.Sprintf("%s/sensor/%s-scanner-%s", integration.config.DiscoveryPrefix, bridgeID, scannerID)
 
 	sensorConfig := SensorConfig{
-		Name:             sensorName,
-		ObjectID:         fmt.Sprintf("%s_%s", integration.config.InstanceID, scannerID),
-		UniqueID:         fmt.Sprintf("%s-scanner-%s", bridgeID, scannerID),
-		TildeTopic:       baseTopic,
-		StateTopic:       "~/state",
-		AttributesToopic: "~/attributes",
+		Name:            sensorName,
+		ObjectID:        fmt.Sprintf("%s_%s", integration.config.InstanceID, scannerID),
+		UniqueID:        fmt.Sprintf("%s-scanner-%s", bridgeID, scannerID),
+		TildeTopic:      baseTopic,
+		StateTopic:      "~/state",
+		AttributesTopic: "~/attributes",
 		// Use tiered availability: scanner must be online AND bridge must be online
 		Availability: []AvailabilityConfig{
 			{
@@ -488,11 +488,11 @@ func (integration *Integration) publishBridgeEntityDiscoveryConfig(entityType, n
 	entityID := fmt.Sprintf("%s-%s", bridgeID, entityType)
 
 	sensorConfig := SensorConfig{
-		Name:             name,
-		UniqueID:         entityID,
-		TildeTopic:       baseTopic,
-		StateTopic:       "~/state",
-		AttributesToopic: "~/attributes",
+		Name:            name,
+		UniqueID:        entityID,
+		TildeTopic:      baseTopic,
+		StateTopic:      "~/state",
+		AttributesTopic: "~/attributes",
 		Availability: []AvailabilityConfig{
 			{
 				Topic: integration.GenerateBridgeAvailabilityTopic(),
