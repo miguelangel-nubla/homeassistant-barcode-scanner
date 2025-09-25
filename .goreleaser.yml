@@ -10,8 +10,8 @@ builds:
   - id: homeassistant-barcode-scanner
     goos:
       - linux
-      - windows
-      - darwin
+      # - windows
+      # - darwin
     goarch:
       - amd64
       - arm64
@@ -45,8 +45,7 @@ sboms:
 archives:
   - id: homeassistant-barcode-scanner
     builds:
-      - homeassistant-barcode-scanner-linux
-      - homeassistant-barcode-scanner-others
+      - homeassistant-barcode-scanner
     name_template: "{{ .ProjectName }}-v{{ .Version }}-{{ .Os }}-{{ .Arch }}{{ .Arm }}"
     format_overrides:
       - goos: windows
@@ -54,7 +53,7 @@ archives:
 dockers:
   - id: linux-amd64
     ids:
-      - homeassistant-barcode-scanner-linux
+      - homeassistant-barcode-scanner
     use: buildx
     goos: linux
     goarch: amd64
@@ -79,7 +78,7 @@ dockers:
 
   - id: linux-arm64
     ids:
-      - homeassistant-barcode-scanner-linux
+      - homeassistant-barcode-scanner
     use: buildx
     goos: linux
     goarch: arm64
