@@ -11,20 +11,17 @@ import (
 	"github.com/miguelangel-nubla/homeassistant-barcode-scanner/pkg/scanner"
 )
 
-// Service represents a manageable service component
 type Service interface {
 	Start() error
 	Stop() error
 }
 
-// ServiceManager manages the lifecycle of application services
 type ServiceManager struct {
 	services map[string]Service
 	order    []string
 	logger   *logrus.Logger
 }
 
-// NewServiceManager creates a new service manager
 func NewServiceManager(logger *logrus.Logger) *ServiceManager {
 	return &ServiceManager{
 		services: make(map[string]Service),
@@ -32,14 +29,12 @@ func NewServiceManager(logger *logrus.Logger) *ServiceManager {
 	}
 }
 
-// Register registers a service with the manager
 func (sm *ServiceManager) Register(name string, service Service) {
 	sm.services[name] = service
 	sm.order = append(sm.order, name)
 	sm.logger.WithField("service", name).Debug("Service registered")
 }
 
-// Get returns a service by name with type assertion
 func (sm *ServiceManager) Get(name string) Service {
 	if service, ok := sm.services[name]; ok {
 		return service
@@ -47,7 +42,6 @@ func (sm *ServiceManager) Get(name string) Service {
 	return nil
 }
 
-// GetMQTTClient returns the MQTT client service
 func (sm *ServiceManager) GetMQTTClient() *mqtt.Client {
 	service := sm.Get("mqtt")
 	if service == nil {
@@ -60,7 +54,6 @@ func (sm *ServiceManager) GetMQTTClient() *mqtt.Client {
 	return nil
 }
 
-// GetHomeAssistantIntegration returns the Home Assistant integration service
 func (sm *ServiceManager) GetHomeAssistantIntegration() *homeassistant.Integration {
 	service := sm.Get("homeassistant")
 	if service == nil {
@@ -73,7 +66,6 @@ func (sm *ServiceManager) GetHomeAssistantIntegration() *homeassistant.Integrati
 	return nil
 }
 
-// GetScannerManager returns the scanner manager service
 func (sm *ServiceManager) GetScannerManager() *scanner.ScannerManager {
 	service := sm.Get("scanner")
 	if service == nil {
@@ -86,11 +78,9 @@ func (sm *ServiceManager) GetScannerManager() *scanner.ScannerManager {
 	return nil
 }
 
-// StartAll starts all registered services in order
 func (sm *ServiceManager) StartAll() error {
 	sm.logger.Info("Starting application services...")
 
-	// Special handling for MQTT - need to connect and wait
 	mqttClient := sm.GetMQTTClient()
 	if mqttClient != nil {
 		if err := mqttClient.Connect(); err != nil {
@@ -102,10 +92,9 @@ func (sm *ServiceManager) StartAll() error {
 		sm.logger.Info("MQTT service started")
 	}
 
-	// Start other services
 	for _, name := range sm.order {
 		if name == "mqtt" {
-			continue // Already started
+			continue
 		}
 
 		service := sm.services[name]
@@ -121,11 +110,9 @@ func (sm *ServiceManager) StartAll() error {
 	return nil
 }
 
-// StopAll stops all registered services in reverse order
 func (sm *ServiceManager) StopAll() error {
 	sm.logger.Info("Stopping application services...")
 
-	// Stop services in reverse order
 	for i := len(sm.order) - 1; i >= 0; i-- {
 		name := sm.order[i]
 		service := sm.services[name]
@@ -134,13 +121,11 @@ func (sm *ServiceManager) StopAll() error {
 		logger.Info("Stopping service")
 		if err := service.Stop(); err != nil {
 			logger.WithError(err).Error("Failed to stop service")
-			// Continue stopping other services
 		} else {
 			logger.Info("Service stopped")
 		}
 	}
 
-	// Special handling for MQTT disconnect
 	mqttClient := sm.GetMQTTClient()
 	if mqttClient != nil {
 		mqttClient.Disconnect()

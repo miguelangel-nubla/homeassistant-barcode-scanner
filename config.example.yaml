@@ -37,7 +37,8 @@ scanners:
       vendor_id: 0x60e # USB Vendor ID (required)
       product_id: 0x16c7 # USB Product ID (required)
       # serial: auto-detected from device when only one matching VID/PID found
-    termination_char: "enter" # "enter", "tab", "none", or empty for auto-timeout
+    keyboard_layout: "us" # Keyboard layout: "us", "es", etc. (defaults to "us")
+    termination_char: "enter" # "enter", "tab", or "none" for auto-timeout
   # Scanner with serial for multiple identical devices
   checkout_scanner_1:
     name: "Checkout #1"
@@ -45,7 +46,8 @@ scanners:
       vendor_id: 0x60e
       product_id: 0x16c7
       serial: "ABC123" # Specify when multiple devices have same VID/PID
-    termination_char: "enter"
+    keyboard_layout: "us" # Optional keyboard layout
+    termination_char: "enter" # "enter", "tab", or "none" for auto-timeout
 
   # Second scanner with unique ID
   checkout_scanner_2:
@@ -55,7 +57,8 @@ scanners:
       product_id: 0x16c7
       # Note: Each scanner needs a unique configured ID (checkout_scanner_2)
       # MQTT topics are generated from this ID, not from hardware serials
-    termination_char: "enter"
+    keyboard_layout: "es" # Spanish keyboard layout example
+    termination_char: "enter" # "enter", "tab", or "none" for auto-timeout
 
 # Home Assistant integration configuration
 homeassistant:

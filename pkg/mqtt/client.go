@@ -12,7 +12,6 @@ import (
 	"github.com/miguelangel-nubla/homeassistant-barcode-scanner/pkg/config"
 )
 
-// MQTT client configuration constants
 const (
 	DefaultMaxReconnectInterval = 60 * time.Second
 	DefaultConnectRetryInterval = 2 * time.Second
@@ -23,7 +22,6 @@ const (
 	DefaultDisconnectTimeout    = 250 // milliseconds
 )
 
-// Client represents an MQTT client with auto-reconnection capabilities
 type Client struct {
 	client       mqtt.Client
 	config       *config.MQTTConfig
@@ -35,7 +33,6 @@ type Client struct {
 	onDisconnect func()
 }
 
-// NewClient creates a new MQTT client
 func NewClient(cfg *config.MQTTConfig, willTopic string, logger *logrus.Logger) (*Client, error) {
 	c := &Client{
 		config:    cfg,
@@ -49,7 +46,6 @@ func NewClient(cfg *config.MQTTConfig, willTopic string, logger *logrus.Logger) 
 	return c, nil
 }
 
-// buildClientOptions creates and configures MQTT client options
 func (c *Client) buildClientOptions() *mqtt.ClientOptions {
 	opts := mqtt.NewClientOptions().
 		AddBroker(c.config.BrokerURL).
@@ -66,7 +62,6 @@ func (c *Client) buildClientOptions() *mqtt.ClientOptions {
 		SetOnConnectHandler(c.handleConnect).
 		SetConnectionLostHandler(c.handleDisconnect)
 
-	// Credentials
 	if c.config.Username != "" {
 		opts.SetUsername(c.config.Username)
 		if c.config.Password != "" {
@@ -74,14 +69,12 @@ func (c *Client) buildClientOptions() *mqtt.ClientOptions {
 		}
 	}
 
-	// TLS for secure connections
 	if c.config.IsSecure() {
 		opts.SetTLSConfig(&tls.Config{
 			InsecureSkipVerify: c.config.InsecureSkipVerify, // #nosec G402 - configurable for dev environments
 		})
 	}
 
-	// Will message (retained for availability)
 	if c.willTopic != "" {
 		opts.SetWill(c.willTopic, "offline", c.config.QoS, true)
 	}
@@ -89,22 +82,18 @@ func (c *Client) buildClientOptions() *mqtt.ClientOptions {
 	return opts
 }
 
-// SetOnConnectCallback sets the callback function to be called when connected
 func (c *Client) SetOnConnectCallback(callback func()) {
 	c.onConnect = callback
 }
 
-// SetOnDisconnectCallback sets the callback function to be called when disconnected
 func (c *Client) SetOnDisconnectCallback(callback func()) {
 	c.onDisconnect = callback
 }
 
-// Start starts the MQTT client (implements Service interface)
 func (c *Client) Start() error {
 	return c.Connect()
 }
 
-// Connect connects to the MQTT broker
 func (c *Client) Connect() error {
 	c.logger.Infof("Connecting to MQTT broker: %s", c.config.BrokerURL)
 
@@ -116,13 +105,11 @@ func (c *Client) Connect() error {
 	return nil
 }
 
-// Stop stops the MQTT client (implements Service interface)
 func (c *Client) Stop() error {
 	c.Disconnect()
 	return nil
 }
 
-// Disconnect disconnects from the MQTT broker
 func (c *Client) Disconnect() {
 	c.logger.Info("Disconnecting from MQTT broker")
 
@@ -130,7 +117,6 @@ func (c *Client) Disconnect() {
 	c.setConnected(false)
 }
 
-// Publish publishes a message to the specified topic with retain flag
 func (c *Client) Publish(topic, payload string, retain bool) error {
 	if !c.IsConnected() {
 		return fmt.Errorf("MQTT client is not connected")
@@ -139,7 +125,7 @@ func (c *Client) Publish(topic, payload string, retain bool) error {
 	token := c.client.Publish(topic, c.config.QoS, retain, payload)
 	token.Wait()
 	if err := token.Error(); err != nil {
-		c.logger.WithFields(map[string]interface{}{
+		c.logger.WithFields(map[string]any{
 			"topic":  topic,
 			"retain": retain,
 		}).WithError(err).Error("MQTT publish failed")
@@ -149,7 +135,6 @@ func (c *Client) Publish(topic, payload string, retain bool) error {
 	return nil
 }
 
-// PublishWithRetry publishes a message with retry logic for critical messages
 func (c *Client) PublishWithRetry(topic, payload string, maxRetries int, retryDelay time.Duration) error {
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if err := c.attemptPublish(topic, payload, attempt, maxRetries); err == nil {
@@ -171,7 +156,7 @@ func (c *Client) attemptPublish(topic, payload string, attempt, maxRetries int) 
 
 	if err := c.Publish(topic, payload, false); err != nil {
 		if attempt == maxRetries {
-			c.logger.WithFields(map[string]interface{}{
+			c.logger.WithFields(map[string]any{
 				"topic":    topic,
 				"attempts": maxRetries + 1,
 			}).WithError(err).Error("MQTT publish failed after all retries")
@@ -182,51 +167,43 @@ func (c *Client) attemptPublish(topic, payload string, attempt, maxRetries int) 
 	return nil
 }
 
-// IsConnected returns true if the client is connected to the broker
 func (c *Client) IsConnected() bool {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 	return c.connected && c.client.IsConnected()
 }
 
-// setConnected sets the connection status
 func (c *Client) setConnected(connected bool) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	c.connected = connected
 }
 
-// handleConnect is called when the client connects to the broker
 func (c *Client) handleConnect(client mqtt.Client) {
 	c.logger.Info("MQTT client connected")
 	c.setConnected(true)
 
-	// Publish online status (retained for will message)
 	if c.willTopic != "" {
 		if err := c.Publish(c.willTopic, "online", true); err != nil {
 			c.logger.Errorf("Failed to publish online status: %v", err)
 		}
 	}
 
-	// Call user callback
 	if c.onConnect != nil {
 		c.onConnect()
 	}
 }
 
-// handleDisconnect is called when the connection to the broker is lost
 func (c *Client) handleDisconnect(client mqtt.Client, err error) {
 	c.logger.Errorf("MQTT connection lost: %v", err)
 	c.logger.Info("MQTT client will attempt automatic reconnection...")
 	c.setConnected(false)
 
-	// Call user callback
 	if c.onDisconnect != nil {
 		c.onDisconnect()
 	}
 }
 
-// WaitForConnection waits for the client to connect, with a timeout
 func (c *Client) WaitForConnection(timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {

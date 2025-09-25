@@ -10,7 +10,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Config represents the application configuration
 type Config struct {
 	MQTT          MQTTConfig               `yaml:"mqtt"`
 	Scanners      map[string]ScannerConfig `yaml:"scanners"`
@@ -18,7 +17,6 @@ type Config struct {
 	Logging       LoggingConfig            `yaml:"logging"`
 }
 
-// MQTTConfig contains MQTT broker settings
 type MQTTConfig struct {
 	BrokerURL          string `yaml:"broker_url"`
 	Username           string `yaml:"username,omitempty"`
@@ -29,39 +27,34 @@ type MQTTConfig struct {
 	InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
 }
 
-// ScannerIdentification identifies a scanner by USB vendor/product ID and optional serial
 type ScannerIdentification struct {
-	VendorID  uint16 `yaml:"vendor_id"`        // USB Vendor ID (required)
-	ProductID uint16 `yaml:"product_id"`       // USB Product ID (required)
-	Serial    string `yaml:"serial,omitempty"` // Optional serial number for device matching
+	VendorID  uint16 `yaml:"vendor_id"`
+	ProductID uint16 `yaml:"product_id"`
+	Serial    string `yaml:"serial,omitempty"`
 }
 
-// ScannerConfig contains barcode scanner settings
 type ScannerConfig struct {
-	ID              string                `yaml:"id"`                         // Required unique identifier for this scanner
-	Name            string                `yaml:"name,omitempty"`             // Optional friendly name
-	Identification  ScannerIdentification `yaml:"identification"`             // How to identify this specific scanner
-	TerminationChar string                `yaml:"termination_char,omitempty"` // "enter", "tab", "none", or empty for auto-timeout
+	ID              string                `yaml:"id"`
+	Name            string                `yaml:"name,omitempty"`
+	Identification  ScannerIdentification `yaml:"identification"`
+	TerminationChar string                `yaml:"termination_char,omitempty"`
+	KeyboardLayout  string                `yaml:"keyboard_layout,omitempty"`
 }
 
-// HomeAssistantConfig contains Home Assistant specific settings
 type HomeAssistantConfig struct {
 	DiscoveryPrefix string `yaml:"discovery_prefix"`
 	InstanceID      string `yaml:"instance_id,omitempty"` // Unique identifier for this instance
 }
 
-// LoggingConfig contains logging settings
 type LoggingConfig struct {
 	Level  string `yaml:"level"`
 	Format string `yaml:"format"`
 }
 
-// IsSecure returns true if the MQTT broker URL uses a secure protocol
 func (m *MQTTConfig) IsSecure() bool {
 	return strings.HasPrefix(m.BrokerURL, "mqtts://") || strings.HasPrefix(m.BrokerURL, "wss://")
 }
 
-// LoadConfig loads configuration from a YAML file
 func LoadConfig(configPath string) (*Config, error) {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
@@ -73,10 +66,8 @@ func LoadConfig(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
-	// Set defaults and validate
 	config.setDefaults()
 
-	// Set scanner IDs from map keys
 	for id, scanner := range config.Scanners {
 		scanner.ID = id
 		config.Scanners[id] = scanner
@@ -89,7 +80,6 @@ func LoadConfig(configPath string) (*Config, error) {
 	return config, nil
 }
 
-// setDefaults sets default values for configuration fields
 func (c *Config) setDefaults() {
 	c.setMQTTDefaults()
 	c.setHomeAssistantDefaults()
@@ -97,7 +87,7 @@ func (c *Config) setDefaults() {
 }
 
 func (c *Config) setMQTTDefaults() {
-	defaults := map[string]interface{}{
+	defaults := map[string]any{
 		"broker_url": "mqtt://localhost:1883",
 		"client_id":  "ha-barcode-bridge",
 		"qos":        byte(1),
@@ -133,7 +123,6 @@ func (c *Config) setLoggingDefaults() {
 	}
 }
 
-// validate checks if the configuration is valid
 func (c *Config) validate() error {
 	if err := c.validateMQTT(); err != nil {
 		return err
@@ -147,7 +136,6 @@ func (c *Config) validate() error {
 	return c.validateLogging()
 }
 
-// validateMQTT validates MQTT configuration
 func (c *Config) validateMQTT() error {
 	if c.MQTT.BrokerURL == "" {
 		return fmt.Errorf("mqtt.broker_url is required")
@@ -177,26 +165,28 @@ func (c *Config) validateMQTTParams() error {
 	return nil
 }
 
-// validateScanners validates scanner configurations
 func (c *Config) validateScanners() error {
 	if len(c.Scanners) == 0 {
 		return fmt.Errorf("at least one scanner must be configured")
 	}
 
-	validTermChars := []string{"", "enter", "return", "tab", "none"}
+	validTermChars := []string{"enter", "tab", "none"}
 
 	for id, scanner := range c.Scanners {
-		if err := c.validateScannerIdentification(id, scanner); err != nil {
+		if err := c.validateScannerIdentification(id, &scanner); err != nil {
 			return err
 		}
-		if err := c.validateTerminationChar(id, scanner, validTermChars); err != nil {
+		if err := c.validateTerminationChar(id, &scanner, validTermChars); err != nil {
+			return err
+		}
+		if err := c.validateKeyboardLayout(id, &scanner); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (c *Config) validateScannerIdentification(id string, scanner ScannerConfig) error {
+func (c *Config) validateScannerIdentification(id string, scanner *ScannerConfig) error {
 	if scanner.Identification.VendorID == 0 {
 		return fmt.Errorf("scanners[%s].identification.vendor_id is required", id)
 	}
@@ -206,7 +196,7 @@ func (c *Config) validateScannerIdentification(id string, scanner ScannerConfig)
 	return nil
 }
 
-func (c *Config) validateTerminationChar(id string, scanner ScannerConfig, validChars []string) error {
+func (c *Config) validateTerminationChar(id string, scanner *ScannerConfig, validChars []string) error {
 	termChar := strings.ToLower(scanner.TerminationChar)
 	if !slices.Contains(validChars, termChar) {
 		return fmt.Errorf("scanners[%s].termination_char '%s' must be one of: %s",
@@ -215,7 +205,45 @@ func (c *Config) validateTerminationChar(id string, scanner ScannerConfig, valid
 	return nil
 }
 
-// validateHomeAssistant validates Home Assistant configuration
+func (c *Config) validateKeyboardLayout(id string, scanner *ScannerConfig) error {
+	if scanner.KeyboardLayout == "" {
+		scanner.KeyboardLayout = "us" // Set default
+	}
+
+	availableLayouts, err := getAvailableKeyboardLayouts()
+	if err != nil {
+		return fmt.Errorf("failed to scan available keyboard layouts: %w", err)
+	}
+
+	layoutName := strings.ToLower(scanner.KeyboardLayout)
+	if !slices.Contains(availableLayouts, layoutName) {
+		return fmt.Errorf("scanners[%s].keyboard_layout '%s' is not available. Available layouts: %s",
+			id, scanner.KeyboardLayout, strings.Join(availableLayouts, ", "))
+	}
+
+	return nil
+}
+
+func getAvailableKeyboardLayouts() ([]string, error) {
+	layoutsDir := "pkg/scanner/layouts"
+	entries, err := os.ReadDir(layoutsDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read layouts directory %s: %w", layoutsDir, err)
+	}
+
+	var layouts []string
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yaml") {
+			continue
+		}
+		layoutName := strings.TrimSuffix(entry.Name(), ".yaml")
+		layouts = append(layouts, layoutName)
+	}
+
+	slices.Sort(layouts)
+	return layouts, nil
+}
+
 func (c *Config) validateHomeAssistant() error {
 	if c.HomeAssistant.DiscoveryPrefix == "" {
 		return fmt.Errorf("homeassistant.discovery_prefix is required")
@@ -223,7 +251,6 @@ func (c *Config) validateHomeAssistant() error {
 	return nil
 }
 
-// validateLogging validates logging configuration
 func (c *Config) validateLogging() error {
 	validLogLevels := []string{"debug", "info", "warn", "warning", "error", "fatal", "panic"}
 	logLevel := strings.ToLower(c.Logging.Level)

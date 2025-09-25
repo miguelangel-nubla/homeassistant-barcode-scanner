@@ -8,7 +8,6 @@ var (
 	COMMIT  = "unknown"
 )
 
-// GetVersion returns the application version
 func GetVersion() string {
 	if VERSION == "dev" {
 		return "1.0.0-dev"

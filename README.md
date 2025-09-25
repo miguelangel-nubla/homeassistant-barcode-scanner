@@ -6,6 +6,7 @@ A lightweight Go application that bridges USB HID barcode scanners to Home Assis
 
 - **Multi-Scanner Support**: Configure and manage multiple barcode scanners simultaneously
 - **USB HID Integration**: Direct USB HID communication with barcode scanners
+- **International Keyboard Support**: Support for different keyboard layouts (US, Spanish, etc.)
 - **Home Assistant Discovery**: Automatic sensor entity creation via MQTT discovery
 - **Flexible Configuration**: YAML-based configuration with scanner identification by VID/PID
 - **Automatic Reconnection**: Handles device disconnections and MQTT broker reconnections
@@ -39,7 +40,6 @@ mqtt:
   broker_url: "mqtt://homeassistant.local:1883"
   username: "mqtt_user"
   password: "mqtt_password"
-  client_id: "ha-barcode-bridge"
 
 # Scanner configuration
 scanners:
@@ -48,6 +48,7 @@ scanners:
     identification:
       vendor_id: 0x60e     # From --list-devices output
       product_id: 0x16c7   # From --list-devices output
+    keyboard_layout: "us"  # Keyboard layout: "us", "es", etc.
     termination_char: "enter"
 
 # Home Assistant integration
@@ -78,10 +79,6 @@ mqtt:
   broker_url: "mqtt://homeassistant.local:1883"  # Required: MQTT broker URL
   username: "mqtt_user"                          # Optional: MQTT username
   password: "mqtt_password"                      # Optional: MQTT password
-  client_id: "ha-barcode-bridge"                 # MQTT client identifier
-  qos: 1                                         # MQTT QoS level (0, 1, or 2)
-  keep_alive: 60                                 # Keep alive interval in seconds
-  insecure_skip_verify: false                    # Skip TLS verification (for testing only)
 ```
 
 **Supported MQTT protocols:**
@@ -103,7 +100,8 @@ scanners:
       vendor_id: 0x60e                     # Required: USB Vendor ID
       product_id: 0x16c7                   # Required: USB Product ID
       serial: "ABC123"                     # Optional: For multiple identical devices
-    termination_char: "enter"              # "enter", "tab", "none", or empty
+    keyboard_layout: "us"                  # Optional: Keyboard layout ("us", "es", etc.)
+    termination_char: "enter"              # "enter", "tab", or "none"
 
   checkout_scanner_1:
     name: "Checkout #1"
@@ -111,8 +109,27 @@ scanners:
       vendor_id: 0x60e
       product_id: 0x16c7
       serial: "DEF456"                     # Required when multiple devices have same VID/PID
+    keyboard_layout: "es"                  # Spanish keyboard layout example
     termination_char: "enter"
 ```
+
+### Keyboard Layout Support
+
+The application supports different keyboard layouts for proper character mapping from HID scancodes:
+
+```yaml
+scanners:
+  scanner_id:
+    keyboard_layout: "us"    # Default US QWERTY layout
+    # or
+    keyboard_layout: "es"    # Spanish QWERTY layout
+```
+
+**Available layouts:**
+- `us` - US QWERTY (default)
+- `es` - Spanish QWERTY
+
+If no layout is specified, it defaults to US layout.
 
 ### Home Assistant Integration
 
@@ -161,7 +178,7 @@ services:
 ### Building from Source
 
 Requirements:
-- Go 1.24 or later
+- Go 1.24.0 or later
 - USB HID development libraries
 
 ```bash
@@ -207,18 +224,9 @@ sudo udevadm trigger
 
 The application automatically creates Home Assistant sensor entities via MQTT discovery:
 
-- **Entity ID**: `sensor.{instance_id}_{scanner_id}_barcode`
-- **Friendly Name**: Uses scanner `name` from configuration
+- **Entity ID**: `sensor.{instance_id}_{scanner_id}`
 - **State**: Last scanned barcode value
-- **Attributes**: Timestamp, scanner info, device availability
-
-### Manual MQTT Topics
-
-If not using discovery, sensors publish to:
-
-```
-homeassistant/sensor/{instance_id}_{scanner_id}_barcode/state
-```
+- **Attributes**: Scanner ID, keyboard layout, termination character, device info
 
 ## Troubleshooting
 
@@ -255,7 +263,7 @@ homeassistant-barcode-scanner --log-level debug
 
 ### Requirements
 
-- Go 1.24+
+- Go 1.24.0+
 - golangci-lint (for linting)
 - Docker (for containerized builds)
 

@@ -18,18 +18,15 @@ import (
 
 const AppName = "homeassistant-barcode-scanner"
 
-// CLI manages command-line interface concerns
 type CLI struct {
 	app    *app.Application
 	logger *logrus.Logger
 }
 
-// NewCLI creates a new CLI instance
 func NewCLI() *CLI {
 	return &CLI{}
 }
 
-// Run runs the CLI application
 func (c *CLI) Run(args []string) error {
 	cmd := &cli.Command{
 		Name:    AppName,
@@ -58,48 +55,38 @@ func (c *CLI) Run(args []string) error {
 	return cmd.Run(context.Background(), args)
 }
 
-// runApp is the main application entry point
 func (c *CLI) runApp(ctx context.Context, cmd *cli.Command) error {
 	c.logger = c.setupLogger(cmd)
 
-	// Handle list-devices flag
 	if cmd.Bool("list-devices") {
 		return c.listDevices()
 	}
 
-	// Load and validate configuration
 	cfg, err := config.LoadConfig(cmd.String("config"))
 	if err != nil {
 		return fmt.Errorf("configuration error: %w", err)
 	}
 
-	// Apply config logging settings if not overridden by flags
 	c.applyConfigLogging(cmd, cfg)
 
 	c.logger.Infof("Starting %s v%s", AppName, common.GetVersion())
 
-	// Create and initialize application
 	c.app = app.NewApplication(cfg, c.logger, common.GetVersion())
 	if err := c.app.Initialize(); err != nil {
 		return fmt.Errorf("failed to initialize application: %w", err)
 	}
 
-	// Set up signal handling
 	shutdownCh := c.setupSignalHandling()
 
-	// Start application
 	if err := c.app.Start(); err != nil {
 		return err
 	}
 
-	// Wait for shutdown signal
 	<-shutdownCh
 
-	// Graceful shutdown
 	return c.app.Stop()
 }
 
-// setupLogger configures the logger based on CLI flags
 func (c *CLI) setupLogger(cmd *cli.Command) *logrus.Logger {
 	logger := logrus.New()
 	logger.SetFormatter(&logrus.TextFormatter{FullTimestamp: true})
@@ -111,9 +98,7 @@ func (c *CLI) setupLogger(cmd *cli.Command) *logrus.Logger {
 	return logger
 }
 
-// applyConfigLogging applies logging configuration from config file
 func (c *CLI) applyConfigLogging(cmd *cli.Command, cfg *config.Config) {
-	// Apply config logging settings if not overridden by flags
 	if !cmd.IsSet("log-level") {
 		if level, err := logrus.ParseLevel(cfg.Logging.Level); err == nil {
 			c.logger.SetLevel(level)
@@ -124,7 +109,6 @@ func (c *CLI) applyConfigLogging(cmd *cli.Command, cfg *config.Config) {
 	}
 }
 
-// setupSignalHandling sets up OS signal handling for graceful shutdown
 func (c *CLI) setupSignalHandling() <-chan struct{} {
 	shutdownCh := make(chan struct{})
 	sigCh := make(chan os.Signal, 1)
@@ -139,7 +123,6 @@ func (c *CLI) setupSignalHandling() <-chan struct{} {
 	return shutdownCh
 }
 
-// listDevices lists available HID devices for configuration purposes
 func (c *CLI) listDevices() error {
 	allDevices := scanner.ListAllDevices()
 	if len(allDevices) == 0 {

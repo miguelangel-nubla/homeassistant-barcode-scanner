@@ -11,7 +11,6 @@ import (
 	"github.com/miguelangel-nubla/homeassistant-barcode-scanner/pkg/config"
 )
 
-// ScannerManager manages multiple barcode scanner instances
 type ScannerManager struct {
 	scanners             map[string]*BarcodeScanner
 	configs              []config.ScannerConfig
@@ -22,7 +21,6 @@ type ScannerManager struct {
 	stopCh               chan struct{}
 }
 
-// NewScannerManager creates a new scanner manager
 func NewScannerManager(configs []config.ScannerConfig, logger *logrus.Logger) *ScannerManager {
 	return &ScannerManager{
 		scanners: make(map[string]*BarcodeScanner),
@@ -32,7 +30,6 @@ func NewScannerManager(configs []config.ScannerConfig, logger *logrus.Logger) *S
 	}
 }
 
-// NewScannerManagerFromMap creates a new scanner manager from a map of scanner configs
 func NewScannerManagerFromMap(configMap map[string]config.ScannerConfig, logger *logrus.Logger) *ScannerManager {
 	configs := make([]config.ScannerConfig, 0, len(configMap))
 	for _, cfg := range configMap {
@@ -41,24 +38,20 @@ func NewScannerManagerFromMap(configMap map[string]config.ScannerConfig, logger 
 	return NewScannerManager(configs, logger)
 }
 
-// SetOnScanCallback sets the callback for barcode scan events
 func (sm *ScannerManager) SetOnScanCallback(callback func(scannerID, barcode string)) {
 	sm.onScanCallback = callback
 }
 
-// SetOnConnectionChangeCallback sets the callback for connection state changes
 func (sm *ScannerManager) SetOnConnectionChangeCallback(callback func(scannerID string, connected bool)) {
 	sm.onConnectionCallback = callback
 }
 
-// Start starts all configured scanners
 func (sm *ScannerManager) Start() error {
 	sm.logger.Info("Starting scanner manager...")
 
 	for _, cfg := range sm.configs {
-		if err := sm.startScanner(cfg); err != nil {
+		if err := sm.startScanner(&cfg); err != nil {
 			sm.logger.Errorf("Failed to start scanner %s: %v", cfg.ID, err)
-			// Continue with other scanners - don't fail completely
 		}
 	}
 
@@ -66,7 +59,6 @@ func (sm *ScannerManager) Start() error {
 	return nil
 }
 
-// Stop stops all scanners
 func (sm *ScannerManager) Stop() error {
 	close(sm.stopCh)
 
@@ -85,7 +77,6 @@ func (sm *ScannerManager) Stop() error {
 	return nil
 }
 
-// GetConnectedScanners returns information about all connected scanners
 func (sm *ScannerManager) GetConnectedScanners() map[string]*hid.DeviceInfo {
 	sm.mutex.RLock()
 	defer sm.mutex.RUnlock()
@@ -101,27 +92,26 @@ func (sm *ScannerManager) GetConnectedScanners() map[string]*hid.DeviceInfo {
 	return connected
 }
 
-// GetScanner returns a specific scanner by ID
 func (sm *ScannerManager) GetScanner(id string) *BarcodeScanner {
 	sm.mutex.RLock()
 	defer sm.mutex.RUnlock()
 	return sm.scanners[id]
 }
 
-// startScanner initializes and starts a single scanner
-func (sm *ScannerManager) startScanner(cfg config.ScannerConfig) error {
+func (sm *ScannerManager) startScanner(cfg *config.ScannerConfig) error {
 	sm.logger.Infof("Starting scanner: %s", cfg.ID)
 
-	// Create scanner using VID/PID identification
+	keyboardLayout := cfg.KeyboardLayout
+
 	scanner := NewBarcodeScannerWithSerial(
 		cfg.Identification.VendorID,
 		cfg.Identification.ProductID,
 		cfg.Identification.Serial,
 		cfg.TerminationChar,
+		keyboardLayout,
 		sm.logger,
 	)
 
-	// Set callbacks that include scanner ID
 	scanner.SetOnScanCallback(func(barcode string) {
 		if sm.onScanCallback != nil {
 			sm.onScanCallback(cfg.ID, barcode)
@@ -134,15 +124,12 @@ func (sm *ScannerManager) startScanner(cfg config.ScannerConfig) error {
 		}
 	})
 
-	// Store scanner in map BEFORE starting it (to avoid race with callback)
 	sm.mutex.Lock()
 	sm.scanners[cfg.ID] = scanner
 	sm.mutex.Unlock()
 	sm.logger.Debugf("Stored scanner %s in manager before starting", cfg.ID)
 
-	// Start the scanner (this will trigger connection callback)
 	if err := scanner.Start(); err != nil {
-		// Remove from map if start fails
 		sm.mutex.Lock()
 		delete(sm.scanners, cfg.ID)
 		sm.mutex.Unlock()
@@ -153,7 +140,6 @@ func (sm *ScannerManager) startScanner(cfg config.ScannerConfig) error {
 	return nil
 }
 
-// SetReconnectDelay sets the reconnection delay for all scanners
 func (sm *ScannerManager) SetReconnectDelay(delay time.Duration) {
 	sm.mutex.RLock()
 	defer sm.mutex.RUnlock()
