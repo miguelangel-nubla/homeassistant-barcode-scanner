@@ -81,7 +81,7 @@ func (c *CLI) runApp(ctx context.Context, cmd *cli.Command) error {
 
 	c.applyConfigLogging(cmd, cfg)
 
-	c.logger.Infof("Starting %s v%s", AppName, common.GetVersion())
+	c.logger.Infof("Starting %s %s", AppName, common.GetVersion())
 
 	c.app = app.NewApplication(cfg, c.logger, common.GetVersion())
 	if err := c.app.Initialize(); err != nil {
