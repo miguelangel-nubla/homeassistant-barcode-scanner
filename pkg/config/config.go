@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/miguelangel-nubla/homeassistant-barcode-scanner/pkg/layouts"
 	"gopkg.in/yaml.v3"
 )
 
@@ -225,23 +226,7 @@ func (c *Config) validateKeyboardLayout(id string, scanner *ScannerConfig) error
 }
 
 func getAvailableKeyboardLayouts() ([]string, error) {
-	layoutsDir := "../scanner/layouts"
-	entries, err := os.ReadDir(layoutsDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read layouts directory %s: %w", layoutsDir, err)
-	}
-
-	var layouts []string
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yaml") {
-			continue
-		}
-		layoutName := strings.TrimSuffix(entry.Name(), ".yaml")
-		layouts = append(layouts, layoutName)
-	}
-
-	slices.Sort(layouts)
-	return layouts, nil
+	return layouts.GetAvailableLayouts()
 }
 
 func (c *Config) validateHomeAssistant() error {

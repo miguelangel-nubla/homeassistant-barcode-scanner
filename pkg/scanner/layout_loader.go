@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/miguelangel-nubla/homeassistant-barcode-scanner/pkg/layouts"
 	"gopkg.in/yaml.v3"
 )
 
@@ -121,19 +122,23 @@ func GetKeyboardLayout(name string) (LoadedKeyboardLayout, error) {
 }
 
 func GetAvailableLayouts() []string {
-	if loadedLayouts == nil {
-		if err := LoadKeyboardLayouts(); err != nil {
-			return []string{}
+	availableLayouts, err := layouts.GetAvailableLayouts()
+	if err != nil {
+		// Fallback to loaded layouts if embedded layouts fail
+		if loadedLayouts == nil {
+			if err := LoadKeyboardLayouts(); err != nil {
+				return []string{}
+			}
 		}
-	}
 
-	var layouts []string
-	for name := range loadedLayouts {
-		layouts = append(layouts, name)
+		var fallbackLayouts []string
+		for name := range loadedLayouts {
+			fallbackLayouts = append(fallbackLayouts, name)
+		}
+		slices.Sort(fallbackLayouts)
+		return fallbackLayouts
 	}
-
-	slices.Sort(layouts)
-	return layouts
+	return availableLayouts
 }
 
 func IsLayoutAvailable(name string) bool {

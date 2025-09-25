@@ -1,0 +1,106 @@
+# US QWERTY Keyboard Layout
+name: "US English (QWERTY)"
+description: "Standard US QWERTY keyboard layout"
+
+# Letters mapping (a-z keys)
+letters:
+  0x04: ['a', 'A']  # A key
+  0x05: ['b', 'B']  # B key
+  0x06: ['c', 'C']  # C key
+  0x07: ['d', 'D']  # D key
+  0x08: ['e', 'E']  # E key
+  0x09: ['f', 'F']  # F key
+  0x0a: ['g', 'G']  # G key
+  0x0b: ['h', 'H']  # H key
+  0x0c: ['i', 'I']  # I key
+  0x0d: ['j', 'J']  # J key
+  0x0e: ['k', 'K']  # K key
+  0x0f: ['l', 'L']  # L key
+  0x10: ['m', 'M']  # M key
+  0x11: ['n', 'N']  # N key
+  0x12: ['o', 'O']  # O key
+  0x13: ['p', 'P']  # P key
+  0x14: ['q', 'Q']  # Q key
+  0x15: ['r', 'R']  # R key
+  0x16: ['s', 'S']  # S key
+  0x17: ['t', 'T']  # T key
+  0x18: ['u', 'U']  # U key
+  0x19: ['v', 'V']  # V key
+  0x1a: ['w', 'W']  # W key
+  0x1b: ['x', 'X']  # X key
+  0x1c: ['y', 'Y']  # Y key
+  0x1d: ['z', 'Z']  # Z key
+
+# Number row (1-0 keys)
+numbers:
+  0x1e: ['1', '!']  # 1 key
+  0x1f: ['2', '@']  # 2 key
+  0x20: ['3', '#']  # 3 key
+  0x21: ['4', '$']  # 4 key
+  0x22: ['5', '%']  # 5 key
+  0x23: ['6', '^']  # 6 key
+  0x24: ['7', '&']  # 7 key
+  0x25: ['8', '*']  # 8 key
+  0x26: ['9', '(']  # 9 key
+  0x27: ['0', ')']  # 0 key
+
+# Symbol and special keys
+symbols:
+  # Special keys
+  0x28: ["\n", "\n"]  # Enter key
+  0x29: ["\x1B", "\x1B"]  # Escape key (ESC character)
+  0x2A: ["\x08", "\x08"]  # Backspace
+  0x2B: ["\t", "\t"]  # Tab key
+  0x2C: [' ', ' ']   # Space key
+
+  # Symbol keys
+  0x2D: ['-', '_']   # Minus/Underscore
+  0x2E: ['=', '+']   # Equal/Plus
+  0x2F: ['[', '{']   # Left bracket
+  0x30: [']', '}']   # Right bracket
+  0x31: ['\', '|']   # Backslash/Pipe
+  0x32: ['#', '~']   # Non-US Hash/Tilde
+  0x33: [';', ':']   # Semicolon/Colon
+  0x34: ["'", '"']   # Apostrophe/Quote
+  0x35: ['`', '~']   # Grave accent/Tilde
+  0x36: [',', '<']   # Comma/Less than
+  0x37: ['.', '>']   # Period/Greater than
+  0x38: ['/', '?']   # Slash/Question mark
+
+  # Keypad
+  0x54: ['/', '/']   # Keypad /
+  0x55: ['*', '*']   # Keypad *
+  0x56: ['-', '-']   # Keypad -
+  0x57: ['+', '+']   # Keypad +
+  0x58: ["\n", "\n"] # Keypad Enter
+  0x59: ['1', '1']   # Keypad 1
+  0x5A: ['2', '2']   # Keypad 2
+  0x5B: ['3', '3']   # Keypad 3
+  0x5C: ['4', '4']   # Keypad 4
+  0x5D: ['5', '5']   # Keypad 5
+  0x5E: ['6', '6']   # Keypad 6
+  0x5F: ['7', '7']   # Keypad 7
+  0x60: ['8', '8']   # Keypad 8
+  0x61: ['9', '9']   # Keypad 9
+  0x62: ['0', '0']   # Keypad 0
+  0x63: ['.', '.']   # Keypad .
+
+# Ignored keys (function keys, arrows, etc.) - return null character
+ignored:
+  - 0x3A  # F1
+  - 0x3B  # F2
+  - 0x3C  # F3
+  - 0x3D  # F4
+  - 0x3E  # F5
+  - 0x3F  # F6
+  - 0x40  # F7
+  - 0x41  # F8
+  - 0x42  # F9
+  - 0x43  # F10
+  - 0x44  # F11
+  - 0x45  # F12
+  - 0x4F  # Right arrow
+  - 0x50  # Left arrow
+  - 0x51  # Down arrow
+  - 0x52  # Up arrow
+  - 0x53  # Num Lock
