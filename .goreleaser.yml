@@ -22,9 +22,9 @@ builds:
       - -X '{{ .ModulePath }}/pkg/common.BRANCH={{ .Branch }}'
       - -X '{{ .ModulePath }}/pkg/common.VERSION={{ .Tag }}'
       - -X '{{ .ModulePath }}/pkg/common.COMMIT={{ .Commit }}'
-    mod_timestamp: '{{ .CommitTimestamp }}'
+    mod_timestamp: "{{ .CommitTimestamp }}"
     env:
-      - CGO_ENABLED=1  # Required for USB HID library support
+      - CGO_ENABLED=1 # Required for USB HID library support
 
   - id: homeassistant-barcode-scanner-arm64
     goos:
@@ -41,18 +41,19 @@ builds:
       - -X '{{ .ModulePath }}/pkg/common.BRANCH={{ .Branch }}'
       - -X '{{ .ModulePath }}/pkg/common.VERSION={{ .Tag }}'
       - -X '{{ .ModulePath }}/pkg/common.COMMIT={{ .Commit }}'
-    mod_timestamp: '{{ .CommitTimestamp }}'
+    mod_timestamp: "{{ .CommitTimestamp }}"
     env:
-      - CGO_ENABLED=1  # Required for USB HID library support
-      - CC=aarch64-linux-gnu-gcc  # Cross-compiler for ARM64
+      - CGO_ENABLED=1 # Required for USB HID library support
+      - CC=aarch64-linux-gnu-gcc # Cross-compiler for ARM64
 
-  - id: homeassistant-barcode-scanner-armv6
+  - id: homeassistant-barcode-scanner-arm
     goos:
       - linux
     goarch:
       - arm
     goarm:
       - "6"
+      - "7"
     flags:
       - -trimpath
     ldflags:
@@ -62,10 +63,10 @@ builds:
       - -X '{{ .ModulePath }}/pkg/common.BRANCH={{ .Branch }}'
       - -X '{{ .ModulePath }}/pkg/common.VERSION={{ .Tag }}'
       - -X '{{ .ModulePath }}/pkg/common.COMMIT={{ .Commit }}'
-    mod_timestamp: '{{ .CommitTimestamp }}'
+    mod_timestamp: "{{ .CommitTimestamp }}"
     env:
-      - CGO_ENABLED=1  # Required for USB HID library support
-      - CC=arm-linux-gnueabihf-gcc  # Cross-compiler for ARM v6
+      - CGO_ENABLED=1 # Required for USB HID library support
+      - CC=arm-linux-gnueabihf-gcc # Cross-compiler for ARM v6/v7
       # hooks:
       #   post:
       #   - cmd: |
@@ -83,7 +84,7 @@ archives:
     builds:
       - homeassistant-barcode-scanner-amd64
       - homeassistant-barcode-scanner-arm64
-      - homeassistant-barcode-scanner-armv6
+      - homeassistant-barcode-scanner-arm
     name_template: "{{ .ProjectName }}-v{{ .Version }}-{{ .Os }}-{{ .Arch }}{{ .Arm }}"
     format_overrides:
       - goos: windows
@@ -97,7 +98,7 @@ dockers:
     goarch: amd64
     dockerfile: Dockerfile
     image_templates:
-      - '{{ .Env.REGISTRY }}/{{ .Env.IMAGE }}:v{{ .Version }}-amd64'
+      - "{{ .Env.REGISTRY }}/{{ .Env.IMAGE }}:v{{ .Version }}-amd64"
       - >-
         {{ .Env.REGISTRY }}/{{ .Env.IMAGE }}:{{ replace .Branch "/" "-" }}-{{ .ShortCommit }}-amd64-{{ .Timestamp }}
     build_flag_templates:
@@ -122,7 +123,7 @@ dockers:
     goarch: arm64
     dockerfile: Dockerfile
     image_templates:
-      - '{{ .Env.REGISTRY }}/{{ .Env.IMAGE }}:v{{ .Version }}-arm64'
+      - "{{ .Env.REGISTRY }}/{{ .Env.IMAGE }}:v{{ .Version }}-arm64"
       - >-
         {{ .Env.REGISTRY }}/{{ .Env.IMAGE }}:{{ replace .Branch "/" "-" }}-{{ .ShortCommit }}-arm64-{{ .Timestamp }}
     build_flag_templates:
@@ -139,10 +140,10 @@ dockers:
         replace (replace (replace .GitURL "git@" "https://") ".git" "") "github.com:" "github.com/"
         }}
 docker_manifests:
-  - name_template: '{{ .Env.REGISTRY }}/{{ .Env.IMAGE }}:v{{ .Version }}'
+  - name_template: "{{ .Env.REGISTRY }}/{{ .Env.IMAGE }}:v{{ .Version }}"
     image_templates:
-      - '{{ .Env.REGISTRY }}/{{ .Env.IMAGE }}:v{{ .Version }}-amd64'
-      - '{{ .Env.REGISTRY }}/{{ .Env.IMAGE }}:v{{ .Version }}-arm64'
+      - "{{ .Env.REGISTRY }}/{{ .Env.IMAGE }}:v{{ .Version }}-amd64"
+      - "{{ .Env.REGISTRY }}/{{ .Env.IMAGE }}:v{{ .Version }}-arm64"
   - name_template: >-
       {{ .Env.REGISTRY }}/{{ .Env.IMAGE }}:{{ replace .Branch "/" "-" }}-{{ .ShortCommit }}-{{ .Timestamp }}
     image_templates:
