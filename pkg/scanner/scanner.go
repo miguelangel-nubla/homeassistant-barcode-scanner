@@ -77,7 +77,20 @@ func (s *BarcodeScanner) SetOnConnectionChangeCallback(callback func(bool)) {
 
 func (s *BarcodeScanner) Start() error {
 	go s.connectionManager()
-	s.logger.Info("Barcode scanner started successfully")
+	s.logger.Debug("Barcode scanner started successfully")
+	return nil
+}
+
+func (s *BarcodeScanner) TryInitialConnect() error {
+	device, _, err := s.findAndOpenDevice()
+	if err != nil {
+		return err
+	}
+
+	if device != nil {
+		device.Close()
+	}
+
 	return nil
 }
 
@@ -120,7 +133,7 @@ func (s *BarcodeScanner) Stop() error {
 		}
 	}
 
-	s.logger.Info("Barcode scanner stopped")
+	s.logger.Debug("Barcode scanner stopped")
 	return nil
 }
 
@@ -163,7 +176,7 @@ func (s *BarcodeScanner) tryConnect() bool {
 		callback(true)
 	}
 
-	s.logger.Infof("Connected to device %04x:%04x (%s)", s.vendorID, s.productID, deviceInfo.Product)
+	s.logger.Debugf("Connected to device %04x:%04x (%s)", s.vendorID, s.productID, deviceInfo.Product)
 	return true
 }
 
@@ -178,7 +191,7 @@ func (s *BarcodeScanner) disconnect() {
 
 	if device != nil {
 		if err := device.Close(); err != nil {
-			s.logger.Debugf("Error closing device: %v", err)
+			s.logger.Warnf("Error closing device: %v", err)
 		}
 	}
 
@@ -189,8 +202,6 @@ func (s *BarcodeScanner) disconnect() {
 	if callback != nil {
 		callback(false)
 	}
-
-	s.logger.Info("Device disconnected")
 }
 
 func (s *BarcodeScanner) isTargetDevice(deviceInfo *hid.DeviceInfo) bool {
@@ -231,7 +242,7 @@ func (s *BarcodeScanner) runReadLoop() {
 			}
 
 		case err := <-errorChan:
-			s.logger.Debugf("HID read error: %v", err)
+			s.logger.Warnf("HID read error: %v", err)
 			s.disconnect()
 			return
 		}

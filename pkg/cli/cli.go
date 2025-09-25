@@ -128,7 +128,7 @@ func (c *CLI) setupSignalHandling() <-chan struct{} {
 
 	go func() {
 		sig := <-sigCh
-		c.logger.Infof("Received signal: %v", sig)
+		c.logger.Warnf("Received signal: %v", sig)
 		close(shutdownCh)
 	}()
 

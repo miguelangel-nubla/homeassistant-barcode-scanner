@@ -127,14 +127,14 @@ func (integration *Integration) Stop() error {
 }
 
 func (integration *Integration) AddScanner(scannerID, scannerName string, scannerConfig *config.ScannerConfig) {
-	integration.logger.Infof("Registering scanner configuration: %s", scannerID)
+	integration.logger.Debugf("Registering scanner configuration: %s", scannerID)
 
 	integration.scannerConfigs[scannerID] = scannerConfig
 	integration.logger.Debugf("Stored config for scanner %s, will create HA device when hardware connects", scannerID)
 }
 
 func (integration *Integration) RemoveScanner(scannerID string) {
-	integration.logger.Infof("Removing scanner from Home Assistant integration: %s", scannerID)
+	integration.logger.Debugf("Removing scanner from Home Assistant integration: %s", scannerID)
 
 	if integration.mqtt.IsConnected() {
 		scanner := integration.scanners[scannerID]

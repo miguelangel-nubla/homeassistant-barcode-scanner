@@ -111,7 +111,7 @@ func (c *Client) Stop() error {
 }
 
 func (c *Client) Disconnect() {
-	c.logger.Info("Disconnecting from MQTT broker")
+	c.logger.Debug("Disconnecting from MQTT broker")
 
 	c.client.Disconnect(DefaultDisconnectTimeout)
 	c.setConnected(false)
@@ -180,7 +180,7 @@ func (c *Client) setConnected(connected bool) {
 }
 
 func (c *Client) handleConnect(client mqtt.Client) {
-	c.logger.Info("MQTT client connected")
+	c.logger.Debug("MQTT client connected")
 	c.setConnected(true)
 
 	if c.willTopic != "" {

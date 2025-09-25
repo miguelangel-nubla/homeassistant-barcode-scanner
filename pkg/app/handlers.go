@@ -57,8 +57,6 @@ func (h *EventHandlers) createConnectionHandler(
 		}
 
 		if connected {
-			logger.Info("Scanner connected")
-
 			scannerInstance := scannerManager.GetScanner(scannerID)
 			if scannerInstance != nil && scannerInstance.IsConnected() {
 				if deviceInfo := scannerInstance.GetConnectedDeviceInfo(); deviceInfo != nil {
@@ -76,7 +74,7 @@ func (h *EventHandlers) createConnectionHandler(
 				logger.Error("Scanner instance not found or not connected - this indicates a bug")
 			}
 		} else {
-			logger.Info("Scanner disconnected")
+			logger.Error("Scanner disconnected")
 		}
 
 		if err := haManager.SetScannerConnected(scannerID, connected); err != nil {

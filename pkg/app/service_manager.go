@@ -99,11 +99,11 @@ func (sm *ServiceManager) StartAll() error {
 
 		service := sm.services[name]
 		logger := sm.logger.WithField("service", name)
-		logger.Info("Starting service")
+		logger.Debug("Starting service")
 		if err := service.Start(); err != nil {
 			return fmt.Errorf("failed to start service %s: %w", name, err)
 		}
-		logger.Info("Service started")
+		logger.Debug("Service started")
 	}
 
 	sm.logger.Info("All services started successfully")
@@ -118,18 +118,18 @@ func (sm *ServiceManager) StopAll() error {
 		service := sm.services[name]
 
 		logger := sm.logger.WithField("service", name)
-		logger.Info("Stopping service")
+		logger.Debug("Stopping service")
 		if err := service.Stop(); err != nil {
 			logger.WithError(err).Error("Failed to stop service")
 		} else {
-			logger.Info("Service stopped")
+			logger.Debug("Service stopped")
 		}
 	}
 
 	mqttClient := sm.GetMQTTClient()
 	if mqttClient != nil {
 		mqttClient.Disconnect()
-		sm.logger.Info("MQTT service disconnected")
+		sm.logger.Debug("MQTT service disconnected")
 	}
 
 	sm.logger.Info("All services stopped")

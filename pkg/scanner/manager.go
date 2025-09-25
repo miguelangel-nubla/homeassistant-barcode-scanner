@@ -49,6 +49,8 @@ func (sm *ScannerManager) SetOnConnectionChangeCallback(callback func(scannerID 
 func (sm *ScannerManager) Start() error {
 	sm.logger.Info("Starting scanner manager...")
 
+	sm.checkInitialConnections()
+
 	for _, cfg := range sm.configs {
 		if err := sm.startScanner(&cfg); err != nil {
 			sm.logger.Errorf("Failed to start scanner %s: %v", cfg.ID, err)
@@ -66,7 +68,7 @@ func (sm *ScannerManager) Stop() error {
 	defer sm.mutex.Unlock()
 
 	for id, scanner := range sm.scanners {
-		sm.logger.Infof("Stopping scanner: %s", id)
+		sm.logger.Debugf("Stopping scanner: %s", id)
 		if err := scanner.Stop(); err != nil {
 			sm.logger.Errorf("Error stopping scanner %s: %v", id, err)
 		}
@@ -99,7 +101,7 @@ func (sm *ScannerManager) GetScanner(id string) *BarcodeScanner {
 }
 
 func (sm *ScannerManager) startScanner(cfg *config.ScannerConfig) error {
-	sm.logger.Infof("Starting scanner: %s", cfg.ID)
+	sm.logger.Debugf("Starting scanner: %s", cfg.ID)
 
 	keyboardLayout := cfg.KeyboardLayout
 
@@ -136,7 +138,7 @@ func (sm *ScannerManager) startScanner(cfg *config.ScannerConfig) error {
 		return fmt.Errorf("failed to start scanner: %w", err)
 	}
 
-	sm.logger.Infof("Scanner %s started successfully", cfg.ID)
+	sm.logger.Debugf("Scanner %s started successfully", cfg.ID)
 	return nil
 }
 
@@ -146,5 +148,38 @@ func (sm *ScannerManager) SetReconnectDelay(delay time.Duration) {
 
 	for _, scanner := range sm.scanners {
 		scanner.SetReconnectDelay(delay)
+	}
+}
+
+func (sm *ScannerManager) checkInitialConnections() {
+	sm.logger.Info("Checking initial scanner connections...")
+
+	connected := 0
+	disconnected := 0
+
+	for _, cfg := range sm.configs {
+		scanner := NewBarcodeScannerWithSerial(
+			cfg.Identification.VendorID,
+			cfg.Identification.ProductID,
+			cfg.Identification.Serial,
+			cfg.TerminationChar,
+			cfg.KeyboardLayout,
+			sm.logger,
+		)
+
+		if err := scanner.TryInitialConnect(); err != nil {
+			sm.logger.Warnf("Scanner '%s' (%s) not connected at startup: %v", cfg.ID, cfg.Name, err)
+			disconnected++
+		} else {
+			sm.logger.Infof("Scanner '%s' (%s) available at startup", cfg.ID, cfg.Name)
+			connected++
+		}
+	}
+
+	if disconnected > 0 {
+		sm.logger.Warnf("Startup check: %d scanner(s) connected, %d scanner(s) not available", connected, disconnected)
+		sm.logger.Info("Disconnected scanners will automatically connect when plugged in")
+	} else {
+		sm.logger.Infof("Startup check: All %d configured scanner(s) are available", connected)
 	}
 }
