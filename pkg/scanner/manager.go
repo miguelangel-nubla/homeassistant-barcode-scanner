@@ -49,7 +49,9 @@ func (sm *ScannerManager) SetOnConnectionChangeCallback(callback func(scannerID 
 func (sm *ScannerManager) Start() error {
 	sm.logger.Info("Starting scanner manager...")
 
-	sm.checkInitialConnections()
+	if err := sm.checkInitialConnections(); err != nil {
+		return err
+	}
 
 	for _, cfg := range sm.configs {
 		if err := sm.startScanner(&cfg); err != nil {
@@ -151,7 +153,7 @@ func (sm *ScannerManager) SetReconnectDelay(delay time.Duration) {
 	}
 }
 
-func (sm *ScannerManager) checkInitialConnections() {
+func (sm *ScannerManager) checkInitialConnections() error {
 	sm.logger.Info("Checking initial scanner connections...")
 
 	connected := 0
@@ -176,10 +178,18 @@ func (sm *ScannerManager) checkInitialConnections() {
 		}
 	}
 
+	if connected == 0 && len(sm.configs) > 0 {
+		return fmt.Errorf("FATAL: None of the %d configured scanners could connect - "+
+			"this usually indicates insufficient privileges (privileged mode required for HID device access)",
+			len(sm.configs))
+	}
+
 	if disconnected > 0 {
 		sm.logger.Warnf("Startup check: %d scanner(s) connected, %d scanner(s) not available", connected, disconnected)
 		sm.logger.Info("Disconnected scanners will automatically connect when plugged in")
 	} else {
 		sm.logger.Infof("Startup check: All %d configured scanner(s) are available", connected)
 	}
+
+	return nil
 }
