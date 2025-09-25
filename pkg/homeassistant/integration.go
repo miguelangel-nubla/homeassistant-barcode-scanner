@@ -5,12 +5,18 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/karalabe/hid"
 	"github.com/sirupsen/logrus"
 
 	"github.com/miguelangel-nubla/homeassistant-barcode-scanner/pkg/config"
 	"github.com/miguelangel-nubla/homeassistant-barcode-scanner/pkg/mqtt"
+)
+
+const (
+	StatusOffline = "offline"
+	StatusUnknown = "unknown"
 )
 
 type DeviceInfo struct {
@@ -39,6 +45,7 @@ type SensorConfig struct {
 	Device            *DeviceInfo          `json:"device,omitempty"`
 	Icon              string               `json:"icon,omitempty"`
 	ForceUpdate       bool                 `json:"force_update,omitempty"`
+	EntityCategory    string               `json:"entity_category,omitempty"`
 }
 
 type Integration struct {
@@ -49,14 +56,27 @@ type Integration struct {
 	scanners         map[string]*ScannerDevice
 	scannerConfigs   map[string]*config.ScannerConfig
 	bridgeDeviceInfo *DeviceInfo
+	bridgeEntities   *BridgeEntityManager
+}
+
+type ScannerHealthMetrics struct {
+	LastSeen       time.Time
+	ConnectedAt    *time.Time
+	DisconnectedAt *time.Time
+	ReconnectCount int
+	ErrorCount     int
+	TotalScans     int
+	LastScanTime   *time.Time
 }
 
 type ScannerDevice struct {
-	ID         string
-	Name       string
-	Connected  bool
-	DeviceInfo *DeviceInfo
-	Topics     *ScannerTopics
+	ID           string
+	Name         string
+	Connected    bool
+	DeviceInfo   *DeviceInfo
+	Topics       *ScannerTopics
+	HealthTopics *ScannerTopics
+	Health       *ScannerHealthMetrics
 }
 
 type ScannerTopics struct {
@@ -64,6 +84,20 @@ type ScannerTopics struct {
 	StateTopic        string
 	AvailabilityTopic string
 	AttributesTopic   string
+}
+
+type BridgeEntity struct {
+	EntityType       string
+	Name             string
+	Icon             string
+	GetStatus        func(*Integration) string
+	GetAttributes    func(*Integration) map[string]any
+	GetShutdownState func(*Integration) string
+}
+
+type BridgeEntityManager struct {
+	integration *Integration
+	entities    []BridgeEntity
 }
 
 func NewIntegration(
@@ -90,7 +124,72 @@ func NewIntegration(
 		SWVersion:    version,
 	}
 
+	integration.bridgeEntities = &BridgeEntityManager{
+		integration: integration,
+		entities: []BridgeEntity{
+			{
+				EntityType: "diagnostics",
+				Name:       "Diagnostics",
+				Icon:       "mdi:stethoscope",
+				GetStatus:  (*Integration).getScannerSummaryStatus,
+				GetAttributes: func(i *Integration) map[string]any {
+					return map[string]any{
+						"connected_scanners": i.getConnectedScannerCount(),
+						"total_scanners":     len(i.scanners),
+						"scanner_list":       i.getScannerList(),
+					}
+				},
+				GetShutdownState: func(i *Integration) string { return StatusOffline },
+			},
+		},
+	}
+
 	return integration
+}
+
+func (bem *BridgeEntityManager) publishAllDiscoveryConfigs() error {
+	for _, entity := range bem.entities {
+		if err := bem.integration.publishBridgeEntityDiscoveryConfig(entity.EntityType, entity.Name, entity.Icon); err != nil {
+			bem.integration.logger.WithError(err).Errorf("Failed to publish %s discovery config", entity.Name)
+			return err
+		}
+	}
+	return nil
+}
+
+func (bem *BridgeEntityManager) publishAllStates() {
+	for _, entity := range bem.entities {
+		if err := bem.publishEntityState(entity); err != nil {
+			bem.integration.logger.WithError(err).Errorf("Failed to update %s", entity.Name)
+		}
+	}
+}
+
+func (bem *BridgeEntityManager) publishEntityState(entity BridgeEntity) error {
+	topics, _ := bem.integration.generateBridgeEntityTopics(entity.EntityType)
+	status := entity.GetStatus(bem.integration)
+
+	if err := bem.integration.mqtt.Publish(topics.StateTopic, status, false); err != nil {
+		return err
+	}
+
+	attributes := entity.GetAttributes(bem.integration)
+	attributesJSON, err := json.Marshal(attributes)
+	if err != nil {
+		return fmt.Errorf("failed to marshal %s attributes: %w", entity.Name, err)
+	}
+
+	return bem.integration.mqtt.Publish(topics.AttributesTopic, string(attributesJSON), false)
+}
+
+func (bem *BridgeEntityManager) publishOfflineStates() {
+	for _, entity := range bem.entities {
+		topics, _ := bem.integration.generateBridgeEntityTopics(entity.EntityType)
+		shutdownState := entity.GetShutdownState(bem.integration)
+		if err := bem.integration.mqtt.Publish(topics.StateTopic, shutdownState, false); err != nil {
+			bem.integration.logger.WithError(err).Errorf("Failed to publish %s shutdown state", entity.Name)
+		}
+	}
 }
 
 func (integration *Integration) Start() error {
@@ -114,13 +213,16 @@ func (integration *Integration) Stop() error {
 			if err := integration.publishScannerAvailability(scannerID, "offline"); err != nil {
 				integration.logger.WithField("scanner_id", scannerID).WithError(err).Error("Failed to publish offline status")
 			}
+			if err := integration.publishScannerState(scannerID, StatusUnknown); err != nil {
+				integration.logger.WithField("scanner_id", scannerID).WithError(err).Error("Failed to publish unknown state")
+			}
 		}
 
-		// Publish offline status for bridge availability (for graceful shutdown)
-		// LWT only triggers on unexpected disconnections, so we need manual publish for graceful shutdown
 		if err := integration.publishBridgeAvailability("offline"); err != nil {
 			integration.logger.WithError(err).Error("Failed to publish bridge offline status")
 		}
+
+		integration.bridgeEntities.publishOfflineStates()
 	}
 
 	return nil
@@ -171,17 +273,25 @@ func (integration *Integration) SetScannerDeviceInfo(scannerID string, deviceInf
 	bridgeID := integration.generateBridgeDeviceID()
 	scannerDeviceID := integration.generateScannerDeviceID(scannerID)
 
+	now := time.Now()
 	scanner := &ScannerDevice{
-		ID:        scannerID,
-		Name:      displayName,
-		Connected: false, // Will be set by SetScannerConnected
-		Topics:    integration.generateScannerTopics(scannerID),
+		ID:           scannerID,
+		Name:         displayName,
+		Connected:    false,
+		Topics:       integration.generateScannerTopics(scannerID),
+		HealthTopics: integration.generateScannerHealthTopics(scannerID),
 		DeviceInfo: &DeviceInfo{
 			Identifiers:  []string{scannerDeviceID},
 			Name:         displayName,
 			Model:        strings.TrimSpace(deviceInfo.Product),
 			Manufacturer: strings.TrimSpace(deviceInfo.Manufacturer),
 			ViaDevice:    bridgeID,
+		},
+		Health: &ScannerHealthMetrics{
+			LastSeen:       now,
+			ReconnectCount: 0,
+			ErrorCount:     0,
+			TotalScans:     0,
 		},
 	}
 
@@ -190,7 +300,6 @@ func (integration *Integration) SetScannerDeviceInfo(scannerID string, deviceInf
 	integration.logger.Infof("Created HA device for scanner %s: %s %s (VID:PID %04x:%04x)",
 		scannerID, deviceInfo.Manufacturer, deviceInfo.Product, deviceInfo.VendorID, deviceInfo.ProductID)
 
-	// Publish availability first (required for HA auto-discovery timing)
 	if integration.mqtt.IsConnected() {
 		if err := integration.publishScannerAvailability(scannerID, "offline"); err != nil {
 			integration.logger.Errorf("Failed to publish initial availability for scanner %s: %v", scannerID, err)
@@ -198,6 +307,9 @@ func (integration *Integration) SetScannerDeviceInfo(scannerID string, deviceInf
 
 		if err := integration.publishScannerDiscoveryConfig(scannerID); err != nil {
 			integration.logger.Errorf("Failed to publish discovery config for scanner %s: %v", scannerID, err)
+		}
+		if err := integration.publishScannerHealthDiscoveryConfig(scannerID); err != nil {
+			integration.logger.Errorf("Failed to publish health discovery config for scanner %s: %v", scannerID, err)
 		}
 	}
 }
@@ -208,30 +320,44 @@ func (integration *Integration) SetScannerConnected(scannerID string, connected 
 		return fmt.Errorf("scanner %s not found", scannerID)
 	}
 
+	now := time.Now()
+	scanner.Health.LastSeen = now
+	if connected && !scanner.Connected {
+		scanner.Health.ConnectedAt = &now
+		if scanner.Health.DisconnectedAt != nil {
+			scanner.Health.ReconnectCount++
+		}
+		scanner.Health.DisconnectedAt = nil
+	} else if !connected && scanner.Connected {
+		scanner.Health.DisconnectedAt = &now
+		scanner.Health.ConnectedAt = nil
+	}
+
 	scanner.Connected = connected
 
-	if connected {
-		if err := integration.publishScannerAvailability(scannerID, "online"); err != nil {
-			return err
-		}
-		if err := integration.publishScannerState(scannerID, "unknown"); err != nil {
-			return err
-		}
-		if err := integration.publishScannerAttributes(scannerID); err != nil {
-			return err
-		}
-	} else {
-		if err := integration.publishScannerAvailability(scannerID, "offline"); err != nil {
-			return err
-		}
+	if err := integration.publishScannerState(scannerID, StatusUnknown); err != nil {
+		return err
+	}
+	if err := integration.publishScannerAttributes(scannerID); err != nil {
+		return err
 	}
 
-	if err := integration.publishScannerSummary(); err != nil {
-		integration.logger.WithError(err).Error("Failed to update scanner summary")
+	var availabilityStatus string
+	if connected {
+		availabilityStatus = "online"
+	} else {
+		availabilityStatus = "offline"
 	}
-	if err := integration.publishDiagnostics(); err != nil {
-		integration.logger.WithError(err).Error("Failed to update diagnostics")
+
+	if err := integration.publishScannerAvailability(scannerID, availabilityStatus); err != nil {
+		return err
 	}
+
+	if err := integration.publishScannerHealthState(scannerID); err != nil {
+		integration.logger.WithError(err).Errorf("Failed to publish health state for scanner %s", scannerID)
+	}
+
+	integration.bridgeEntities.publishAllStates()
 	return nil
 }
 
@@ -244,6 +370,11 @@ func (integration *Integration) PublishBarcode(scannerID, barcode string) error 
 	if !integration.mqtt.IsConnected() {
 		return fmt.Errorf("MQTT not connected")
 	}
+
+	now := time.Now()
+	scanner.Health.LastSeen = now
+	scanner.Health.LastScanTime = &now
+	scanner.Health.TotalScans++
 
 	if err := integration.publishScannerState(scannerID, barcode); err != nil {
 		return err
@@ -267,6 +398,10 @@ func (integration *Integration) PublishBarcode(scannerID, barcode string) error 
 		return fmt.Errorf("failed to publish attributes: %w", err)
 	}
 
+	if err := integration.publishScannerHealthState(scannerID); err != nil {
+		integration.logger.WithError(err).Errorf("Failed to update health state after scan for scanner %s", scannerID)
+	}
+
 	return nil
 }
 
@@ -276,7 +411,7 @@ func (integration *Integration) generateBridgeDeviceID() string {
 	}
 	hostname, err := os.Hostname()
 	if err != nil {
-		hostname = "unknown"
+		hostname = StatusUnknown
 	}
 	return fmt.Sprintf("ha-barcode-bridge-%s", hostname)
 }
@@ -297,7 +432,7 @@ func generateBridgeDeviceID(haConfig *config.HomeAssistantConfig) string {
 	}
 	hostname, err := os.Hostname()
 	if err != nil {
-		hostname = "unknown"
+		hostname = StatusUnknown
 	}
 	return fmt.Sprintf("ha-barcode-bridge-%s", hostname)
 }
@@ -310,6 +445,18 @@ func (integration *Integration) generateScannerDeviceID(scannerID string) string
 func (integration *Integration) generateScannerTopics(scannerID string) *ScannerTopics {
 	bridgeID := integration.generateBridgeDeviceID()
 	entityID := fmt.Sprintf("%s-scanner-%s", bridgeID, scannerID)
+
+	return &ScannerTopics{
+		ConfigTopic:       fmt.Sprintf("%s/sensor/%s/config", integration.config.DiscoveryPrefix, entityID),
+		StateTopic:        fmt.Sprintf("%s/sensor/%s/state", integration.config.DiscoveryPrefix, entityID),
+		AvailabilityTopic: fmt.Sprintf("%s/sensor/%s/availability", integration.config.DiscoveryPrefix, entityID),
+		AttributesTopic:   fmt.Sprintf("%s/sensor/%s/attributes", integration.config.DiscoveryPrefix, entityID),
+	}
+}
+
+func (integration *Integration) generateScannerHealthTopics(scannerID string) *ScannerTopics {
+	bridgeID := integration.generateBridgeDeviceID()
+	entityID := fmt.Sprintf("%s-scanner-%s-health", bridgeID, scannerID)
 
 	return &ScannerTopics{
 		ConfigTopic:       fmt.Sprintf("%s/sensor/%s/config", integration.config.DiscoveryPrefix, entityID),
@@ -332,40 +479,24 @@ func (integration *Integration) getScannerSummaryStatus() string {
 	return "partial"
 }
 
-func (integration *Integration) getDiagnosticsStatus() string {
-	if integration.mqtt.IsConnected() {
-		return "healthy"
-	}
-	return "error"
-}
-
 func (integration *Integration) handleConnect() {
 	integration.logger.Info("MQTT connected, publishing bridge availability and discovery configs")
 
-	if err := integration.publishBridgeAvailability("online"); err != nil {
-		integration.logger.WithError(err).Error("Failed to publish bridge availability")
+	if err := integration.bridgeEntities.publishAllDiscoveryConfigs(); err != nil {
+		integration.logger.WithError(err).Error("Failed to publish bridge entity discovery configs")
 	}
 
-	if err := integration.publishScannerSummary(); err != nil {
-		integration.logger.WithError(err).Error("Failed to update scanner summary")
-	}
-	if err := integration.publishDiagnostics(); err != nil {
-		integration.logger.WithError(err).Error("Failed to update diagnostics")
-	}
-
-	if err := integration.publishScannerSummaryDiscoveryConfig(); err != nil {
-		integration.logger.WithError(err).Error("Failed to publish scanner summary discovery config")
-	}
-	if err := integration.publishDiagnosticsDiscoveryConfig(); err != nil {
-		integration.logger.WithError(err).Error("Failed to publish diagnostics discovery config")
-	}
-
-	// Publish discovery config for all scanners that exist (only connected hardware)
-	// Note: availability for individual scanners is already handled by SetScannerDeviceInfo/SetScannerConnected
 	for scannerID := range integration.scanners {
 		if err := integration.publishScannerDiscoveryConfig(scannerID); err != nil {
 			integration.logger.WithField("scanner_id", scannerID).WithError(err).Error("Failed to publish discovery config")
 		}
+		if err := integration.publishScannerHealthDiscoveryConfig(scannerID); err != nil {
+			integration.logger.WithField("scanner_id", scannerID).WithError(err).Error("Failed to publish health discovery config")
+		}
+	}
+
+	if err := integration.publishBridgeAvailability("online"); err != nil {
+		integration.logger.WithError(err).Error("Failed to publish bridge availability")
 	}
 }
 
@@ -395,7 +526,6 @@ func (integration *Integration) publishScannerDiscoveryConfig(scannerID string) 
 		TildeTopic:      baseTopic,
 		StateTopic:      "~/state",
 		AttributesTopic: "~/attributes",
-		// Use tiered availability: scanner must be online AND bridge must be online
 		Availability: []AvailabilityConfig{
 			{
 				Topic: "~/availability",
@@ -404,7 +534,7 @@ func (integration *Integration) publishScannerDiscoveryConfig(scannerID string) 
 				Topic: integration.GenerateBridgeAvailabilityTopic(),
 			},
 		},
-		AvailabilityMode: "all", // Both must be online for entity to be available
+		AvailabilityMode: "all",
 		Device:           scanner.DeviceInfo,
 		Icon:             "mdi:barcode-scan",
 		ForceUpdate:      true,
@@ -415,13 +545,47 @@ func (integration *Integration) publishScannerDiscoveryConfig(scannerID string) 
 		return fmt.Errorf("failed to marshal discovery config: %w", err)
 	}
 
-	// Use retain=true for discovery configs so they persist for HA restarts
 	return integration.mqtt.Publish(scanner.Topics.ConfigTopic, string(configJSON), true)
+}
+
+func (integration *Integration) publishScannerHealthDiscoveryConfig(scannerID string) error {
+	scanner, exists := integration.scanners[scannerID]
+	if !exists || scanner.DeviceInfo == nil {
+		return fmt.Errorf("scanner %s not found or device info not set", scannerID)
+	}
+
+	bridgeID := integration.generateBridgeDeviceID()
+	healthName := fmt.Sprintf("%s Health", scanner.Name)
+	baseTopic := fmt.Sprintf("%s/sensor/%s-scanner-%s-health", integration.config.DiscoveryPrefix, bridgeID, scannerID)
+
+	sensorConfig := SensorConfig{
+		Name:            healthName,
+		ObjectID:        fmt.Sprintf("%s_%s_health", integration.config.InstanceID, scannerID),
+		UniqueID:        fmt.Sprintf("%s-scanner-%s-health", bridgeID, scannerID),
+		TildeTopic:      baseTopic,
+		StateTopic:      "~/state",
+		AttributesTopic: "~/attributes",
+		Availability: []AvailabilityConfig{
+			{
+				Topic: integration.GenerateBridgeAvailabilityTopic(),
+			},
+		},
+		Device:         scanner.DeviceInfo,
+		Icon:           "mdi:heart-pulse",
+		ForceUpdate:    false,
+		EntityCategory: "diagnostic",
+	}
+
+	configJSON, err := json.Marshal(sensorConfig)
+	if err != nil {
+		return fmt.Errorf("failed to marshal health discovery config: %w", err)
+	}
+
+	return integration.mqtt.Publish(scanner.HealthTopics.ConfigTopic, string(configJSON), true)
 }
 
 func (integration *Integration) publishBridgeAvailability(status string) error {
 	topic := integration.GenerateBridgeAvailabilityTopic()
-	// Use retain=true for bridge availability messages so HA sees the last known status
 	return integration.mqtt.Publish(topic, status, true)
 }
 
@@ -431,7 +595,6 @@ func (integration *Integration) publishScannerAvailability(scannerID, status str
 		return fmt.Errorf("scanner %s not found", scannerID)
 	}
 
-	// Use retain=true for availability messages so HA sees the last known status when subscribing
 	return integration.mqtt.Publish(scanner.Topics.AvailabilityTopic, status, true)
 }
 
@@ -467,6 +630,26 @@ func (integration *Integration) publishScannerAttributes(scannerID string) error
 	return integration.mqtt.Publish(scanner.Topics.AttributesTopic, string(attributesJSON), false)
 }
 
+func (integration *Integration) publishScannerHealthState(scannerID string) error {
+	scanner, exists := integration.scanners[scannerID]
+	if !exists {
+		return fmt.Errorf("scanner %s not found", scannerID)
+	}
+
+	healthStatus := integration.getScannerHealthStatus(scannerID)
+	if err := integration.mqtt.Publish(scanner.HealthTopics.StateTopic, healthStatus, false); err != nil {
+		return err
+	}
+
+	attributes := integration.getScannerHealthAttributes(scannerID)
+	attributesJSON, err := json.Marshal(attributes)
+	if err != nil {
+		return fmt.Errorf("failed to marshal health attributes: %w", err)
+	}
+
+	return integration.mqtt.Publish(scanner.HealthTopics.AttributesTopic, string(attributesJSON), false)
+}
+
 func (integration *Integration) generateBridgeEntityTopics(entityType string) (topics *ScannerTopics, baseTopic string) {
 	bridgeID := integration.generateBridgeDeviceID()
 	entityID := fmt.Sprintf("%s-%s", bridgeID, entityType)
@@ -498,9 +681,10 @@ func (integration *Integration) publishBridgeEntityDiscoveryConfig(entityType, n
 				Topic: integration.GenerateBridgeAvailabilityTopic(),
 			},
 		},
-		Device:      integration.bridgeDeviceInfo,
-		Icon:        icon,
-		ForceUpdate: false,
+		Device:         integration.bridgeDeviceInfo,
+		Icon:           icon,
+		ForceUpdate:    false,
+		EntityCategory: "diagnostic",
 	}
 
 	configJSON, err := json.Marshal(sensorConfig)
@@ -508,59 +692,7 @@ func (integration *Integration) publishBridgeEntityDiscoveryConfig(entityType, n
 		return fmt.Errorf("failed to marshal %s discovery config: %w", entityType, err)
 	}
 
-	// Use retain=true for discovery configs so they persist for HA restarts
 	return integration.mqtt.Publish(topics.ConfigTopic, string(configJSON), true)
-}
-
-func (integration *Integration) publishScannerSummaryDiscoveryConfig() error {
-	return integration.publishBridgeEntityDiscoveryConfig("scanners", "Scanner Summary", "mdi:barcode-scan")
-}
-
-func (integration *Integration) publishDiagnosticsDiscoveryConfig() error {
-	return integration.publishBridgeEntityDiscoveryConfig("diagnostics", "Diagnostics", "mdi:stethoscope")
-}
-
-func (integration *Integration) publishScannerSummary() error {
-	topics, _ := integration.generateBridgeEntityTopics("scanners")
-	status := integration.getScannerSummaryStatus()
-
-	if err := integration.mqtt.Publish(topics.StateTopic, status, false); err != nil {
-		return err
-	}
-
-	attributes := map[string]any{
-		"connected_scanners": integration.getConnectedScannerCount(),
-		"total_scanners":     len(integration.scanners),
-		"scanner_list":       integration.getScannerList(),
-	}
-
-	attributesJSON, err := json.Marshal(attributes)
-	if err != nil {
-		return fmt.Errorf("failed to marshal scanner summary attributes: %w", err)
-	}
-
-	return integration.mqtt.Publish(topics.AttributesTopic, string(attributesJSON), false)
-}
-
-func (integration *Integration) publishDiagnostics() error {
-	topics, _ := integration.generateBridgeEntityTopics("diagnostics")
-	status := integration.getDiagnosticsStatus()
-
-	if err := integration.mqtt.Publish(topics.StateTopic, status, false); err != nil {
-		return err
-	}
-
-	attributes := map[string]any{
-		"version":      integration.version,
-		"config_count": len(integration.scannerConfigs),
-	}
-
-	attributesJSON, err := json.Marshal(attributes)
-	if err != nil {
-		return fmt.Errorf("failed to marshal diagnostics attributes: %w", err)
-	}
-
-	return integration.mqtt.Publish(topics.AttributesTopic, string(attributesJSON), false)
 }
 
 func (integration *Integration) getScannerList() []string {
@@ -569,6 +701,54 @@ func (integration *Integration) getScannerList() []string {
 		scanners = append(scanners, scannerID)
 	}
 	return scanners
+}
+
+func (integration *Integration) getScannerHealthStatus(scannerID string) string {
+	scanner, exists := integration.scanners[scannerID]
+	if !exists || scanner.Health == nil {
+		return StatusUnknown
+	}
+
+	if !scanner.Connected {
+		if time.Since(scanner.Health.LastSeen) > 5*time.Minute {
+			return "stale"
+		}
+		return "disconnected"
+	}
+
+	if scanner.Health.ErrorCount > 10 {
+		return "degraded"
+	}
+
+	if scanner.Health.ReconnectCount > 5 {
+		return "unstable"
+	}
+
+	return "healthy"
+}
+
+func (integration *Integration) getScannerHealthAttributes(scannerID string) map[string]any {
+	scanner, exists := integration.scanners[scannerID]
+	if !exists || scanner.Health == nil {
+		return map[string]any{}
+	}
+
+	attributes := map[string]any{
+		"last_seen":       scanner.Health.LastSeen.Format(time.RFC3339),
+		"reconnect_count": scanner.Health.ReconnectCount,
+		"error_count":     scanner.Health.ErrorCount,
+		"total_scans":     scanner.Health.TotalScans,
+	}
+
+	if scanner.Health.ConnectedAt != nil {
+		attributes["connected_at"] = scanner.Health.ConnectedAt.Format(time.RFC3339)
+	}
+
+	if scanner.Health.DisconnectedAt != nil {
+		attributes["disconnected_at"] = scanner.Health.DisconnectedAt.Format(time.RFC3339)
+	}
+
+	return attributes
 }
 
 func (integration *Integration) getConnectedScannerCount() int {
