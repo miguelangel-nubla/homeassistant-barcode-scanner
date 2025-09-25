@@ -12,7 +12,9 @@ A lightweight Go application that bridges USB HID barcode scanners to Home Assis
 - **Automatic Reconnection**: Handles device disconnections and MQTT broker reconnections
 - **Cross-Platform**: Supports Linux, Windows, and macOS
 - **Docker Support**: Ready-to-use Docker images available
-- **Device Monitoring**: Real-time scanner connection status and health monitoring
+- **Health Monitoring**: Individual scanner health sensors with diagnostic metrics
+- **Bridge Diagnostics**: System-wide diagnostics and scanner summary information
+- **Real-time Status**: Live connection status and reliability monitoring
 
 ## Quick Start
 
@@ -223,9 +225,41 @@ sudo udevadm trigger
 
 The application automatically creates Home Assistant sensor entities via MQTT discovery:
 
+#### Main Scanner Sensors
 - **Entity ID**: `sensor.{instance_id}_{scanner_id}`
 - **State**: Last scanned barcode value
 - **Attributes**: Scanner ID, keyboard layout, termination character, device info
+
+#### Health Monitoring Sensors (Diagnostic Category)
+Each scanner automatically gets a health sensor with diagnostic information:
+
+- **Entity ID**: `sensor.{instance_id}_{scanner_id}_health`
+- **State**: Health status (`healthy`, `unstable`, `degraded`, `disconnected`, `stale`)
+- **Attributes**:
+  - Last seen timestamp
+  - Connection uptime
+  - Reconnection count
+  - Error count
+  - Total scans performed
+  - Last scan timestamp
+
+#### Bridge Diagnostics Sensor (Diagnostic Category)
+System-wide monitoring sensor:
+
+- **Entity ID**: `sensor.{instance_id}_diagnostics`
+- **State**: Overall system status (`online`, `partial`, `offline`)
+- **Attributes**:
+  - Connected scanner count
+  - Total configured scanners
+  - List of scanner IDs
+
+### Health Status Meanings
+
+- **healthy**: Scanner operating normally
+- **unstable**: Frequent reconnections (>5 reconnects)
+- **degraded**: High error rate (>10 errors)
+- **disconnected**: Scanner offline but recently active
+- **stale**: Scanner offline for >5 minutes
 
 ## Troubleshooting
 
@@ -249,6 +283,15 @@ The application automatically creates Home Assistant sensor entities via MQTT di
 2. Verify `discovery_prefix` matches Home Assistant configuration
 3. Check MQTT broker logs for discovery messages
 4. Restart Home Assistant if entities don't appear
+
+### Health Sensor Issues
+
+If health sensors show incorrect status or don't appear:
+
+1. Verify diagnostic entities are enabled in Home Assistant
+2. Check that entities appear in the diagnostic section of each device
+3. Health sensors may be hidden by default - check entity visibility settings
+4. Health metrics reset on application restart
 
 ### Debug Logging
 
