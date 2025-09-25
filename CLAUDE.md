@@ -76,6 +76,7 @@ The application follows a layered service architecture:
 - **Application Layer** (`pkg/app/`): Main application orchestration, service management, and event handling
 - **Configuration** (`pkg/config/`): YAML-based configuration management with validation
 - **Scanner Management** (`pkg/scanner/`): HID device discovery, connection management, and barcode reading
+- **Keyboard Layouts** (`pkg/layouts/`): Embedded keyboard layout files with mapping definitions for international support
 - **MQTT Client** (`pkg/mqtt/`): MQTT broker communication with automatic reconnection
 - **Home Assistant Integration** (`pkg/homeassistant/`): MQTT discovery message generation and device registration
 
@@ -125,6 +126,8 @@ scanners:
 - Home Assistant discovery messages are published on startup and device connection
 - The application uses Logrus for structured logging with configurable levels and formats
 - USB HID access requires appropriate permissions (udev rules on Linux)
+- Keyboard layouts are embedded in the binary using Go embed directives for containerized deployments
+- The `pkg/layouts` package provides shared keyboard layout access to avoid circular imports
 
 ## Testing Approach
 

@@ -1,0 +1,9 @@
+services:
+  barcode-scanner:
+    build: .
+    container_name: ha-barcode-scanner
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    volumes:
+      - ./config.yaml:/config.yaml
+    restart: unless-stopped

@@ -156,14 +156,13 @@ Pull and run the Docker image:
 docker run -d \
   --name ha-barcode-scanner \
   --device /dev/bus/usb \
-  -v /path/to/config.yaml:/app/config.yaml \
+  -v ./config.yaml:/config.yaml \
   ghcr.io/miguelangel-nubla/homeassistant-barcode-scanner:latest
 ```
 
 ### Docker Compose
 
 ```yaml
-version: '3.8'
 services:
   barcode-scanner:
     image: ghcr.io/miguelangel-nubla/homeassistant-barcode-scanner:latest
@@ -171,7 +170,7 @@ services:
     devices:
       - /dev/bus/usb:/dev/bus/usb
     volumes:
-      - ./config.yaml:/app/config.yaml
+      - ./config.yaml:/config.yaml
     restart: unless-stopped
 ```
 

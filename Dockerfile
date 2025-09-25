@@ -4,7 +4,7 @@ ARG PROJECT_NAME=homeassistant-barcode-scanner
 RUN apk add --no-cache ca-certificates
 RUN addgroup -S ${PROJECT_NAME} && adduser -S ${PROJECT_NAME} -G ${PROJECT_NAME}
 
-FROM ghcr.io/acorn-io/images-mirror/golang:1.21@sha256:856073656d1a517517792e6cdd2f7a5ef080d3ca2dff33e518c8412f140fdd2d AS build
+FROM golang:1.24.7@sha256:87916acb3242b6259a26deaa7953bdc6a3a6762a28d340e4f1448e7b5c27c009 AS build
 ARG PROJECT_NAME=homeassistant-barcode-scanner
 COPY / /src
 WORKDIR /src
@@ -22,3 +22,4 @@ FROM base
 ARG PROJECT_NAME=homeassistant-barcode-scanner
 COPY --from=build /src/bin/${PROJECT_NAME} /usr/local/bin/${PROJECT_NAME}
 USER ${PROJECT_NAME}
+ENTRYPOINT ["/usr/local/bin/homeassistant-barcode-scanner"]
