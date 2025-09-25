@@ -17,6 +17,7 @@ FROM base AS goreleaser
 ARG PROJECT_NAME=homeassistant-barcode-scanner
 COPY ${PROJECT_NAME} /usr/local/bin/${PROJECT_NAME}
 USER ${PROJECT_NAME}
+ENTRYPOINT ["/usr/local/bin/homeassistant-barcode-scanner"]
 
 FROM base
 ARG PROJECT_NAME=homeassistant-barcode-scanner
