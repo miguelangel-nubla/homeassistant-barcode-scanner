@@ -45,16 +45,16 @@ builds:
     env:
       - CGO_ENABLED=1  # Required for USB HID library support
       - CC=aarch64-linux-gnu-gcc  # Cross-compiler for ARM64
-  # hooks:
-  #   post:
-  #   - cmd: |
-  #       {{- if eq .Os "darwin" -}}
-  #       quill sign-and-notarize "{{ .Path }}" --dry-run={{ .IsSnapshot }} --ad-hoc={{ .IsSnapshot }} -vv
-  #       {{- else -}}
-  #       true
-  #       {{- end -}}
-  #     env:
-  #     - QUILL_LOG_FILE=/tmp/quill-{{ .Target }}.log
+      # hooks:
+      #   post:
+      #   - cmd: |
+      #       {{- if eq .Os "darwin" -}}
+      #       quill sign-and-notarize "{{ .Path }}" --dry-run={{ .IsSnapshot }} --ad-hoc={{ .IsSnapshot }} -vv
+      #       {{- else -}}
+      #       true
+      #       {{- end -}}
+      #     env:
+      #     - QUILL_LOG_FILE=/tmp/quill-{{ .Target }}.log
 sboms:
   - artifacts: archive
 archives:
