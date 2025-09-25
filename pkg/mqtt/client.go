@@ -95,14 +95,43 @@ func (c *Client) Start() error {
 }
 
 func (c *Client) Connect() error {
-	c.logger.Infof("Connecting to MQTT broker: %s", c.config.BrokerURL)
+	return c.ConnectWithRetry(3, 2*time.Second)
+}
 
-	token := c.client.Connect()
-	if token.Wait() && token.Error() != nil {
-		return fmt.Errorf("failed to connect to MQTT broker: %w", token.Error())
+func (c *Client) ConnectWithRetry(maxRetries int, retryDelay time.Duration) error {
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			c.logger.WithField("attempt", attempt+1).Warn("Retrying MQTT connection...")
+			time.Sleep(retryDelay)
+			retryDelay *= 2 // exponential backoff
+		}
+
+		c.logger.Infof("Connecting to MQTT broker: %s (attempt %d/%d)", c.config.BrokerURL, attempt+1, maxRetries+1)
+
+		token := c.client.Connect()
+
+		// Use WaitTimeout instead of Wait to prevent hanging
+		if !token.WaitTimeout(DefaultConnectTimeout) {
+			c.logger.Warn("MQTT connection attempt timed out")
+			if attempt == maxRetries {
+				return fmt.Errorf("MQTT connection timed out after %d attempts", maxRetries+1)
+			}
+			continue
+		}
+
+		if token.Error() != nil {
+			c.logger.WithError(token.Error()).Warn("MQTT connection failed")
+			if attempt == maxRetries {
+				return fmt.Errorf("failed to connect to MQTT broker after %d attempts: %w", maxRetries+1, token.Error())
+			}
+			continue
+		}
+
+		c.logger.Info("Successfully connected to MQTT broker")
+		return nil
 	}
 
-	return nil
+	return fmt.Errorf("failed to connect to MQTT broker after %d attempts", maxRetries+1)
 }
 
 func (c *Client) Stop() error {
