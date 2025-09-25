@@ -7,18 +7,13 @@ env:
   - REGISTRY=ghcr.io
   - IMAGE=miguelangel-nubla/homeassistant-barcode-scanner
 builds:
-  - id: homeassistant-barcode-scanner
+  - id: homeassistant-barcode-scanner-amd64
     goos:
       - linux
-      # - windows
-      # - darwin
     goarch:
       - amd64
-      - arm64
     flags:
       - -trimpath
-    tags:
-      - netgo
     ldflags:
       - -s
       - -w
@@ -30,6 +25,26 @@ builds:
     mod_timestamp: '{{ .CommitTimestamp }}'
     env:
       - CGO_ENABLED=1  # Required for USB HID library support
+
+  - id: homeassistant-barcode-scanner-arm64
+    goos:
+      - linux
+    goarch:
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s
+      - -w
+      # Static linking removed: -extldflags="-static" incompatible with CGO
+      - -X '{{ .ModulePath }}/pkg/common.SUMMARY=v{{ .Version }}'
+      - -X '{{ .ModulePath }}/pkg/common.BRANCH={{ .Branch }}'
+      - -X '{{ .ModulePath }}/pkg/common.VERSION={{ .Tag }}'
+      - -X '{{ .ModulePath }}/pkg/common.COMMIT={{ .Commit }}'
+    mod_timestamp: '{{ .CommitTimestamp }}'
+    env:
+      - CGO_ENABLED=1  # Required for USB HID library support
+      - CC=aarch64-linux-gnu-gcc  # Cross-compiler for ARM64
   # hooks:
   #   post:
   #   - cmd: |
@@ -45,7 +60,8 @@ sboms:
 archives:
   - id: homeassistant-barcode-scanner
     builds:
-      - homeassistant-barcode-scanner
+      - homeassistant-barcode-scanner-amd64
+      - homeassistant-barcode-scanner-arm64
     name_template: "{{ .ProjectName }}-v{{ .Version }}-{{ .Os }}-{{ .Arch }}{{ .Arm }}"
     format_overrides:
       - goos: windows
@@ -53,7 +69,7 @@ archives:
 dockers:
   - id: linux-amd64
     ids:
-      - homeassistant-barcode-scanner
+      - homeassistant-barcode-scanner-amd64
     use: buildx
     goos: linux
     goarch: amd64
@@ -78,7 +94,7 @@ dockers:
 
   - id: linux-arm64
     ids:
-      - homeassistant-barcode-scanner
+      - homeassistant-barcode-scanner-arm64
     use: buildx
     goos: linux
     goarch: arm64
