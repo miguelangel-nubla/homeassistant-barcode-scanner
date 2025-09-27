@@ -233,6 +233,15 @@ func (c *Config) validateHomeAssistant() error {
 	if c.HomeAssistant.DiscoveryPrefix == "" {
 		return fmt.Errorf("homeassistant.discovery_prefix is required")
 	}
+
+	if c.HomeAssistant.InstanceID == "" {
+		hostname, err := os.Hostname()
+		if err != nil {
+			return fmt.Errorf("failed to get hostname for instance_id: %w", err)
+		}
+		c.HomeAssistant.InstanceID = hostname
+	}
+
 	return nil
 }
 

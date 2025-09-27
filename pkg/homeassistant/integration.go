@@ -3,7 +3,6 @@ package homeassistant
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -115,10 +114,10 @@ func NewIntegration(
 		scannerConfigs: make(map[string]*config.ScannerConfig),
 	}
 
-	bridgeID := integration.generateBridgeDeviceID()
+	bridgeID := generateBridgeDeviceID(integration.config)
 	integration.bridgeDeviceInfo = &DeviceInfo{
 		Identifiers:  []string{bridgeID},
-		Name:         "HA Barcode Bridge",
+		Name:         fmt.Sprintf("HA Barcode Bridge - %s", integration.config.InstanceID),
 		Model:        "https://github.com/miguelangel-nubla/homeassistant-barcode-scanner",
 		Manufacturer: "Miguel Angel Nubla",
 		SWVersion:    version,
@@ -270,7 +269,7 @@ func (integration *Integration) SetScannerDeviceInfo(scannerID string, deviceInf
 		displayName = fmt.Sprintf("Scanner %s", scannerID)
 	}
 
-	bridgeID := integration.generateBridgeDeviceID()
+	bridgeID := generateBridgeDeviceID(integration.config)
 	scannerDeviceID := integration.generateScannerDeviceID(scannerID)
 
 	now := time.Now()
@@ -393,19 +392,8 @@ func (integration *Integration) PublishBarcode(scannerID, barcode string) error 
 	return nil
 }
 
-func (integration *Integration) generateBridgeDeviceID() string {
-	if integration.config.InstanceID != "" {
-		return fmt.Sprintf("ha-barcode-bridge-%s", integration.config.InstanceID)
-	}
-	hostname, err := os.Hostname()
-	if err != nil {
-		hostname = StatusUnknown
-	}
-	return fmt.Sprintf("ha-barcode-bridge-%s", hostname)
-}
-
 func (integration *Integration) GenerateBridgeAvailabilityTopic() string {
-	bridgeID := integration.generateBridgeDeviceID()
+	bridgeID := generateBridgeDeviceID(integration.config)
 	return fmt.Sprintf("%s/sensor/%s/availability", integration.config.DiscoveryPrefix, bridgeID)
 }
 
@@ -415,23 +403,16 @@ func GenerateBridgeAvailabilityTopic(haConfig *config.HomeAssistantConfig) strin
 }
 
 func generateBridgeDeviceID(haConfig *config.HomeAssistantConfig) string {
-	if haConfig.InstanceID != "" {
-		return fmt.Sprintf("ha-barcode-bridge-%s", haConfig.InstanceID)
-	}
-	hostname, err := os.Hostname()
-	if err != nil {
-		hostname = StatusUnknown
-	}
-	return fmt.Sprintf("ha-barcode-bridge-%s", hostname)
+	return fmt.Sprintf("ha-barcode-bridge-%s", haConfig.InstanceID)
 }
 
 func (integration *Integration) generateScannerDeviceID(scannerID string) string {
-	bridgeID := integration.generateBridgeDeviceID()
+	bridgeID := generateBridgeDeviceID(integration.config)
 	return fmt.Sprintf("%s-scanner-%s", bridgeID, scannerID)
 }
 
 func (integration *Integration) generateScannerTopics(scannerID string) *ScannerTopics {
-	bridgeID := integration.generateBridgeDeviceID()
+	bridgeID := generateBridgeDeviceID(integration.config)
 	entityID := fmt.Sprintf("%s-scanner-%s", bridgeID, scannerID)
 
 	return &ScannerTopics{
@@ -443,7 +424,7 @@ func (integration *Integration) generateScannerTopics(scannerID string) *Scanner
 }
 
 func (integration *Integration) generateScannerHealthTopics(scannerID string) *ScannerTopics {
-	bridgeID := integration.generateBridgeDeviceID()
+	bridgeID := generateBridgeDeviceID(integration.config)
 	entityID := fmt.Sprintf("%s-scanner-%s-health", bridgeID, scannerID)
 
 	return &ScannerTopics{
@@ -498,7 +479,7 @@ func (integration *Integration) publishScannerDiscoveryConfig(scannerID string) 
 		return fmt.Errorf("scanner %s not found or device info not set", scannerID)
 	}
 
-	bridgeID := integration.generateBridgeDeviceID()
+	bridgeID := generateBridgeDeviceID(integration.config)
 
 	sensorName := scanner.Name
 	if sensorName == "" {
@@ -542,7 +523,7 @@ func (integration *Integration) publishScannerHealthDiscoveryConfig(scannerID st
 		return fmt.Errorf("scanner %s not found or device info not set", scannerID)
 	}
 
-	bridgeID := integration.generateBridgeDeviceID()
+	bridgeID := generateBridgeDeviceID(integration.config)
 	healthName := fmt.Sprintf("%s Health", scanner.Name)
 	baseTopic := fmt.Sprintf("%s/sensor/%s-scanner-%s-health", integration.config.DiscoveryPrefix, bridgeID, scannerID)
 
@@ -639,7 +620,7 @@ func (integration *Integration) publishScannerHealthState(scannerID string) erro
 }
 
 func (integration *Integration) generateBridgeEntityTopics(entityType string) (topics *ScannerTopics, baseTopic string) {
-	bridgeID := integration.generateBridgeDeviceID()
+	bridgeID := generateBridgeDeviceID(integration.config)
 	entityID := fmt.Sprintf("%s-%s", bridgeID, entityType)
 	baseTopic = fmt.Sprintf("%s/sensor/%s", integration.config.DiscoveryPrefix, entityID)
 
@@ -655,7 +636,7 @@ func (integration *Integration) generateBridgeEntityTopics(entityType string) (t
 
 func (integration *Integration) publishBridgeEntityDiscoveryConfig(entityType, name, icon string) error {
 	topics, baseTopic := integration.generateBridgeEntityTopics(entityType)
-	bridgeID := integration.generateBridgeDeviceID()
+	bridgeID := generateBridgeDeviceID(integration.config)
 	entityID := fmt.Sprintf("%s-%s", bridgeID, entityType)
 
 	sensorConfig := SensorConfig{
