@@ -311,6 +311,10 @@ func (integration *Integration) SetScannerDeviceInfo(scannerID string, deviceInf
 		if err := integration.publishScannerHealthDiscoveryConfig(scannerID); err != nil {
 			integration.logger.Errorf("Failed to publish health discovery config for scanner %s: %v", scannerID, err)
 		}
+		// Publish static attributes once during initialization to avoid duplicate HA state changes on each scan
+		if err := integration.publishScannerAttributes(scannerID); err != nil {
+			integration.logger.Errorf("Failed to publish initial attributes for scanner %s: %v", scannerID, err)
+		}
 	}
 }
 
@@ -376,26 +380,10 @@ func (integration *Integration) PublishBarcode(scannerID, barcode string) error 
 	scanner.Health.LastScanTime = &now
 	scanner.Health.TotalScans++
 
+	// Only publish state on barcode scan to prevent duplicate Home Assistant state change events.
+	// Attributes are published once during scanner initialization, not on every scan.
 	if err := integration.publishScannerState(scannerID, barcode); err != nil {
 		return err
-	}
-
-	attributes := map[string]any{
-		"scanner_id": scannerID,
-	}
-
-	if scannerCfg, exists := integration.scannerConfigs[scannerID]; exists {
-		attributes["keyboard_layout"] = scannerCfg.KeyboardLayout
-		attributes["termination_char"] = scannerCfg.TerminationChar
-	}
-
-	attributesJSON, err := json.Marshal(attributes)
-	if err != nil {
-		return fmt.Errorf("failed to marshal attributes: %w", err)
-	}
-
-	if err := integration.mqtt.Publish(scanner.Topics.AttributesTopic, string(attributesJSON), false); err != nil {
-		return fmt.Errorf("failed to publish attributes: %w", err)
 	}
 
 	if err := integration.publishScannerHealthState(scannerID); err != nil {
