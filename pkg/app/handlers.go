@@ -60,12 +60,15 @@ func (h *EventHandlers) createConnectionHandler(
 			scannerInstance := scannerManager.GetScanner(scannerID)
 			if scannerInstance != nil && scannerInstance.IsConnected() {
 				if deviceInfo := scannerInstance.GetConnectedDeviceInfo(); deviceInfo != nil {
-					logger.WithFields(map[string]any{
+					fields := map[string]any{
 						"manufacturer": deviceInfo.Manufacturer,
 						"product":      deviceInfo.Product,
 						"vendor_id":    fmt.Sprintf("%04x", deviceInfo.VendorID),
 						"product_id":   fmt.Sprintf("%04x", deviceInfo.ProductID),
-					}).Info("Scanner device detected")
+						"interface":    deviceInfo.Interface,
+						"serial":       deviceInfo.Serial,
+					}
+					logger.WithFields(fields).Info("Scanner device detected")
 					haManager.SetScannerDeviceInfo(scannerID, deviceInfo)
 				} else {
 					logger.Warn("Scanner connected but device info unavailable")

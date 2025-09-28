@@ -32,6 +32,7 @@ type ScannerIdentification struct {
 	VendorID  uint16 `yaml:"vendor_id"`
 	ProductID uint16 `yaml:"product_id"`
 	Serial    string `yaml:"serial,omitempty"`
+	Interface *int   `yaml:"interface,omitempty"`
 }
 
 type ScannerConfig struct {

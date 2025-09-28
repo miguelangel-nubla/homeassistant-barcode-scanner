@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"regexp"
+	"strings"
 	"syscall"
 
+	"github.com/karalabe/hid"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v3"
 
@@ -135,33 +138,95 @@ func (c *CLI) setupSignalHandling() <-chan struct{} {
 	return shutdownCh
 }
 
+// generateScannerID creates a valid YAML key from device info
+func generateScannerID(name string, device *hid.DeviceInfo) string {
+	// Convert to lowercase and replace spaces/special chars with underscores
+	id := strings.ToLower(name)
+	// Replace any non-alphanumeric characters with underscores
+	reg := regexp.MustCompile(`[^a-z0-9]+`)
+	id = reg.ReplaceAllString(id, "_")
+	// Remove leading/trailing underscores
+	id = strings.Trim(id, "_")
+
+	// If empty or starts with number, prepend "scanner"
+	if id == "" || (id != "" && id[0] >= '0' && id[0] <= '9') {
+		id = fmt.Sprintf("scanner_%s", id)
+	}
+	// If still empty, use fallback
+	if id == "" || id == "scanner_" {
+		id = "scanner"
+	}
+
+	// Add interface index for same VID:PID devices (only if > 0)
+	if device.Interface > 0 {
+		id = fmt.Sprintf("%s_%d", id, device.Interface)
+	}
+
+	// Add serial suffix if available (for additional uniqueness)
+	if device.Serial != "" {
+		serialSuffix := reg.ReplaceAllString(strings.ToLower(device.Serial), "_")
+		serialSuffix = strings.Trim(serialSuffix, "_")
+		if serialSuffix != "" {
+			id = fmt.Sprintf("%s_%s", id, serialSuffix)
+		}
+	}
+
+	return id
+}
+
 func (c *CLI) listDevices() error {
 	allDevices := scanner.ListAllDevices()
 	if len(allDevices) == 0 {
-		fmt.Println("No HID devices found - check permissions or udev rules")
+		fmt.Println("# No HID devices found - check permissions or udev rules")
 		return nil
 	}
 
-	fmt.Printf("Found %d HID device(s):\n\n", len(allDevices))
-	fmt.Println("Use these details to configure your scanners:")
-	fmt.Println("Configuration format:")
 	fmt.Println("scanners:")
-	fmt.Println("  scanner_id:")
-	fmt.Println("    name: \"Friendly Name\"")
-	fmt.Println("    identification:")
-	fmt.Println("      vendor_id: 0xVVVV")
-	fmt.Println("      product_id: 0xPPPP")
-	fmt.Println("      serial: \"SERIAL\" # optional, for multiple identical devices")
-	fmt.Println("")
 
-	for i, device := range allDevices {
-		fmt.Printf("%d. %s (%s)\n", i+1, device.Product, device.Manufacturer)
-		fmt.Printf("   VID:PID: %04x:%04x\n", device.VendorID, device.ProductID)
-		if device.Serial != "" {
-			fmt.Printf("   Serial: %s\n", device.Serial)
+	for _, device := range allDevices {
+		// Generate a friendly name
+		name := device.Product
+		if name == "" {
+			name = "Unknown Device"
 		}
-		fmt.Printf("   Device Path: %s\n", device.Path)
-		fmt.Println("")
+		if device.Manufacturer != "" && device.Manufacturer != name {
+			name = fmt.Sprintf("%s %s", device.Manufacturer, name)
+		}
+
+		// Generate scanner ID based on device info
+		scannerID := generateScannerID(name, &device)
+
+		fmt.Printf("  %s:\n", scannerID)
+
+		// Add comments for additional info not needed in config
+		fmt.Printf("    # Device Path: %s\n", device.Path)
+
+		if device.Manufacturer != "" {
+			fmt.Printf("    # Manufacturer: %s\n", device.Manufacturer)
+		}
+		if device.Product != "" {
+			fmt.Printf("    # Product: %s\n", device.Product)
+		}
+
+		if device.Interface > 0 {
+			fmt.Printf("    # Note: Multiple interfaces found for device %04x:%04x (serial: %s).\n",
+				device.VendorID, device.ProductID, device.Serial)
+			fmt.Printf("    # Test which interface responds to scans.\n")
+		}
+
+		fmt.Printf("    name: \"%s\"\n", name)
+		fmt.Printf("    identification:\n")
+		fmt.Printf("      vendor_id: 0x%04x\n", device.VendorID)
+		fmt.Printf("      product_id: 0x%04x\n", device.ProductID)
+		if device.Serial != "" {
+			fmt.Printf("      serial: \"%s\"\n", device.Serial)
+		}
+		if device.Interface > 0 {
+			fmt.Printf("      interface: %d  # Specify which interface to use\n", device.Interface)
+		}
+		fmt.Printf("    termination_char: \"tab\"  # Options: enter, tab, none\n")
+
+		fmt.Println()
 	}
 
 	return nil

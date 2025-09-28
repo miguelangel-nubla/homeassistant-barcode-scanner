@@ -13,9 +13,10 @@ import (
 )
 
 type BarcodeScanner struct {
-	vendorID       uint16
-	productID      uint16
-	requiredSerial string
+	vendorID          uint16
+	productID         uint16
+	requiredSerial    string
+	requiredInterface *int
 
 	device     *hid.Device
 	deviceInfo *hid.DeviceInfo
@@ -41,16 +42,23 @@ func NewBarcodeScanner(vendorID, productID uint16, terminationChar, keyboardLayo
 func NewBarcodeScannerWithSerial(
 	vendorID, productID uint16, requiredSerial, terminationChar, keyboardLayout string, logger *logrus.Logger,
 ) *BarcodeScanner {
+	return NewBarcodeScannerWithInterface(vendorID, productID, requiredSerial, nil, terminationChar, keyboardLayout, logger)
+}
+
+func NewBarcodeScannerWithInterface(
+	vendorID, productID uint16, requiredSerial string, requiredInterface *int, terminationChar, keyboardLayout string, logger *logrus.Logger,
+) *BarcodeScanner {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &BarcodeScanner{
-		vendorID:       vendorID,
-		productID:      productID,
-		requiredSerial: requiredSerial,
-		logger:         logger,
-		reconnectDelay: time.Second,
-		ctx:            ctx,
-		cancel:         cancel,
+		vendorID:          vendorID,
+		productID:         productID,
+		requiredSerial:    requiredSerial,
+		requiredInterface: requiredInterface,
+		logger:            logger,
+		reconnectDelay:    time.Second,
+		ctx:               ctx,
+		cancel:            cancel,
 	}
 
 	s.hidProcessor = NewHIDProcessor(terminationChar, keyboardLayout, logger)
@@ -98,23 +106,25 @@ func (s *BarcodeScanner) findAndOpenDevice() (*hid.Device, *hid.DeviceInfo, erro
 	devices := hid.Enumerate(s.vendorID, s.productID)
 
 	for _, deviceInfo := range devices {
-		if !s.isTargetDevice(&deviceInfo) {
-			continue
-		}
+		if s.isTargetDevice(&deviceInfo) {
+			device, err := deviceInfo.Open()
+			if err != nil {
+				continue // Try next device
+			}
 
-		device, err := deviceInfo.Open()
-		if err != nil {
-			continue // Try next device
+			normalizedInfo := s.normalizeDeviceInfo(&deviceInfo)
+			return device, normalizedInfo, nil
 		}
-
-		normalizedInfo := s.normalizeDeviceInfo(&deviceInfo)
-		return device, normalizedInfo, nil
 	}
 
+	errorMsg := fmt.Sprintf("device %04x:%04x", s.vendorID, s.productID)
 	if s.requiredSerial != "" {
-		return nil, nil, fmt.Errorf("device %04x:%04x with serial '%s' not found", s.vendorID, s.productID, s.requiredSerial)
+		errorMsg += fmt.Sprintf(" serial '%s'", s.requiredSerial)
 	}
-	return nil, nil, fmt.Errorf("device %04x:%04x not found", s.vendorID, s.productID)
+	if s.requiredInterface != nil {
+		errorMsg += fmt.Sprintf(" interface %d", *s.requiredInterface)
+	}
+	return nil, nil, fmt.Errorf("%s not found", errorMsg)
 }
 
 func (s *BarcodeScanner) Stop() error {
@@ -176,7 +186,8 @@ func (s *BarcodeScanner) tryConnect() bool {
 		callback(true)
 	}
 
-	s.logger.Debugf("Connected to device %04x:%04x (%s)", s.vendorID, s.productID, deviceInfo.Product)
+	interfaceInfo := fmt.Sprintf(" interface %d", deviceInfo.Interface)
+	s.logger.Debugf("Connected to device %04x:%04x%s (%s)", s.vendorID, s.productID, interfaceInfo, deviceInfo.Product)
 	return true
 }
 
@@ -209,8 +220,12 @@ func (s *BarcodeScanner) isTargetDevice(deviceInfo *hid.DeviceInfo) bool {
 		return false
 	}
 
-	if s.requiredSerial != "" {
-		return deviceInfo.Serial == s.requiredSerial
+	if s.requiredSerial != "" && deviceInfo.Serial != s.requiredSerial {
+		return false
+	}
+
+	if s.requiredInterface != nil && deviceInfo.Interface != *s.requiredInterface {
+		return false
 	}
 
 	return true
@@ -302,6 +317,14 @@ func (s *BarcodeScanner) GetConnectedDeviceInfo() *hid.DeviceInfo {
 	info := s.deviceInfo
 	s.mutex.RUnlock()
 	return info
+}
+
+func (s *BarcodeScanner) GetRequiredInterface() *int {
+	return s.requiredInterface
+}
+
+func (s *BarcodeScanner) GetRequiredSerial() string {
+	return s.requiredSerial
 }
 
 func (s *BarcodeScanner) normalizeDeviceInfo(deviceInfo *hid.DeviceInfo) *hid.DeviceInfo {

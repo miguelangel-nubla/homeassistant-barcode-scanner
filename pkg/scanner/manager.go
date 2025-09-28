@@ -107,10 +107,11 @@ func (sm *ScannerManager) startScanner(cfg *config.ScannerConfig) error {
 
 	keyboardLayout := cfg.KeyboardLayout
 
-	scanner := NewBarcodeScannerWithSerial(
+	scanner := NewBarcodeScannerWithInterface(
 		cfg.Identification.VendorID,
 		cfg.Identification.ProductID,
 		cfg.Identification.Serial,
+		cfg.Identification.Interface,
 		cfg.TerminationChar,
 		keyboardLayout,
 		sm.logger,
@@ -160,10 +161,11 @@ func (sm *ScannerManager) checkInitialConnections() error {
 	disconnected := 0
 
 	for _, cfg := range sm.configs {
-		scanner := NewBarcodeScannerWithSerial(
+		scanner := NewBarcodeScannerWithInterface(
 			cfg.Identification.VendorID,
 			cfg.Identification.ProductID,
 			cfg.Identification.Serial,
+			cfg.Identification.Interface,
 			cfg.TerminationChar,
 			cfg.KeyboardLayout,
 			sm.logger,
