@@ -261,6 +261,34 @@ System-wide monitoring sensor:
 - **disconnected**: Scanner offline but recently active
 - **stale**: Scanner offline for >5 minutes
 
+### Combining Multiple Scanners
+
+If you need to combine multiple scanners into a single sensor with force updates, you can use a Home Assistant template sensor:
+
+```yaml
+template:
+  - trigger:
+      - platform: state
+        entity_id: sensor.instanceid_5700db
+      - platform: state
+        entity_id: sensor.instanceid_zebra
+    sensor:
+      - name: instanceid_last_scan
+        unique_id: instanceid_last_scan
+        icon: "mdi:barcode-scan"
+        state: >
+          {% set new = trigger.to_state.state %}
+          {% if new not in ['unknown','unavailable',''] %}
+            {{ new }}
+          {% else %}
+            {{ states('sensor.instanceid_last_scan') }}
+          {% endif %}
+        attributes:
+          last_update: "{{ now().isoformat() }}"
+```
+
+Replace `sensor.instanceid_5700db` and `sensor.instanceid_zebra` with your actual scanner entity IDs. This template creates a unified sensor that updates whenever any of the configured scanners detects a barcode.
+
 ## Troubleshooting
 
 ### Scanner Not Detected
