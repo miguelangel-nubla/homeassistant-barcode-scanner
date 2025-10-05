@@ -89,6 +89,7 @@ type BridgeEntity struct {
 	EntityType       string
 	Name             string
 	Icon             string
+	Retain           bool
 	GetStatus        func(*Integration) string
 	GetAttributes    func(*Integration) map[string]any
 	GetShutdownState func(*Integration) string
@@ -130,6 +131,7 @@ func NewIntegration(
 				EntityType: "diagnostics",
 				Name:       "Diagnostics",
 				Icon:       "mdi:stethoscope",
+				Retain:     true,
 				GetStatus:  (*Integration).getScannerSummaryStatus,
 				GetAttributes: func(i *Integration) map[string]any {
 					return map[string]any{
@@ -164,11 +166,12 @@ func (bem *BridgeEntityManager) publishAllStates() {
 	}
 }
 
+//nolint:gocritic // BridgeEntity contains function pointers that are lighter as value
 func (bem *BridgeEntityManager) publishEntityState(entity BridgeEntity) error {
 	topics, _ := bem.integration.generateBridgeEntityTopics(entity.EntityType)
 	status := entity.GetStatus(bem.integration)
 
-	if err := bem.integration.mqtt.Publish(topics.StateTopic, status, false); err != nil {
+	if err := bem.integration.mqtt.Publish(topics.StateTopic, status, entity.Retain); err != nil {
 		return err
 	}
 
@@ -178,14 +181,14 @@ func (bem *BridgeEntityManager) publishEntityState(entity BridgeEntity) error {
 		return fmt.Errorf("failed to marshal %s attributes: %w", entity.Name, err)
 	}
 
-	return bem.integration.mqtt.Publish(topics.AttributesTopic, string(attributesJSON), false)
+	return bem.integration.mqtt.Publish(topics.AttributesTopic, string(attributesJSON), entity.Retain)
 }
 
 func (bem *BridgeEntityManager) publishOfflineStates() {
 	for _, entity := range bem.entities {
 		topics, _ := bem.integration.generateBridgeEntityTopics(entity.EntityType)
 		shutdownState := entity.GetShutdownState(bem.integration)
-		if err := bem.integration.mqtt.Publish(topics.StateTopic, shutdownState, false); err != nil {
+		if err := bem.integration.mqtt.Publish(topics.StateTopic, shutdownState, entity.Retain); err != nil {
 			bem.integration.logger.WithError(err).Errorf("Failed to publish %s shutdown state", entity.Name)
 		}
 	}
@@ -606,7 +609,7 @@ func (integration *Integration) publishScannerHealthState(scannerID string) erro
 	}
 
 	healthStatus := integration.getScannerHealthStatus(scannerID)
-	if err := integration.mqtt.Publish(scanner.HealthTopics.StateTopic, healthStatus, false); err != nil {
+	if err := integration.mqtt.Publish(scanner.HealthTopics.StateTopic, healthStatus, true); err != nil {
 		return err
 	}
 
@@ -616,7 +619,7 @@ func (integration *Integration) publishScannerHealthState(scannerID string) erro
 		return fmt.Errorf("failed to marshal health attributes: %w", err)
 	}
 
-	return integration.mqtt.Publish(scanner.HealthTopics.AttributesTopic, string(attributesJSON), false)
+	return integration.mqtt.Publish(scanner.HealthTopics.AttributesTopic, string(attributesJSON), true)
 }
 
 func (integration *Integration) generateBridgeEntityTopics(entityType string) (topics *ScannerTopics, baseTopic string) {
