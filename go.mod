@@ -8,7 +8,7 @@ require (
 	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/karalabe/hid v1.0.0
 	github.com/sirupsen/logrus v1.9.3
-	github.com/urfave/cli/v3 v3.4.1
+	github.com/urfave/cli/v3 v3.5.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -18,7 +18,6 @@ require (
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
-	github.com/stretchr/testify v1.11.1 // indirect
 	golang.org/x/net v0.44.0 // indirect
 	golang.org/x/sync v0.17.0 // indirect
 	golang.org/x/sys v0.36.0 // indirect
