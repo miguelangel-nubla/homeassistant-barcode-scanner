@@ -8,7 +8,7 @@ require (
 	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/karalabe/hid v1.0.0
 	github.com/sirupsen/logrus v1.9.3
-	github.com/urfave/cli/v3 v3.5.0
+	github.com/urfave/cli/v3 v3.6.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
