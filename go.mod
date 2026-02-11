@@ -2,7 +2,7 @@ module github.com/miguelangel-nubla/homeassistant-barcode-scanner
 
 go 1.24.0
 
-toolchain go1.25.7
+toolchain go1.26.0
 
 require (
 	github.com/eclipse/paho.mqtt.golang v1.5.1
