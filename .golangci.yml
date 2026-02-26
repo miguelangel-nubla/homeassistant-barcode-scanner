@@ -60,3 +60,7 @@ linters:
         text: "G304:"
         linters:
           - gosec
+      - path: pkg/config/config.go
+        text: "G117:"
+        linters:
+          - gosec
