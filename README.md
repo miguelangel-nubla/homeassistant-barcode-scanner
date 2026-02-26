@@ -48,15 +48,15 @@ scanners:
   warehouse_scanner:
     name: "Warehouse Scanner"
     identification:
-      vendor_id: 0x60e     # From --list-devices output
-      product_id: 0x16c7   # From --list-devices output
-    keyboard_layout: "us"  # Keyboard layout: "us", "es", etc.
+      vendor_id: 0x60e # From --list-devices output
+      product_id: 0x16c7 # From --list-devices output
+    keyboard_layout: "us" # Keyboard layout: "us", "es", etc.
     termination_char: "enter"
 
 # Home Assistant integration
 homeassistant:
   discovery_prefix: "homeassistant"
-  instance_id: "workstation"  # Optional, uses hostname if not set
+  instance_id: "workstation" # Optional, uses hostname if not set
 
 # Logging
 logging:
@@ -78,12 +78,13 @@ The scanner will appear as a sensor entity in Home Assistant with the name "Ware
 
 ```yaml
 mqtt:
-  broker_url: "mqtt://homeassistant.local:1883"  # Required: MQTT broker URL
-  username: "mqtt_user"                          # Optional: MQTT username
-  password: "mqtt_password"                      # Optional: MQTT password
+  broker_url: "mqtt://homeassistant.local:1883" # Required: MQTT broker URL
+  username: "mqtt_user" # Optional: MQTT username
+  password: "mqtt_password" # Optional: MQTT password
 ```
 
 **Supported MQTT protocols:**
+
 - `mqtt://` - Standard MQTT
 - `mqtts://` - MQTT over SSL/TLS
 - `ws://` - MQTT over WebSocket
@@ -97,21 +98,21 @@ Configure multiple scanners using map syntax:
 scanners:
   # Scanner ID (used in MQTT topics and Home Assistant entity IDs)
   office_scanner:
-    name: "Office Barcode Scanner"          # Optional friendly name
+    name: "Office Barcode Scanner" # Optional friendly name
     identification:
-      vendor_id: 0x60e                     # Required: USB Vendor ID
-      product_id: 0x16c7                   # Required: USB Product ID
-      serial: "ABC123"                     # Optional: For multiple identical devices
-    keyboard_layout: "us"                  # Optional: Keyboard layout ("us", "es", etc.)
-    termination_char: "enter"              # "enter", "tab", or "none"
+      vendor_id: 0x60e # Required: USB Vendor ID
+      product_id: 0x16c7 # Required: USB Product ID
+      serial: "ABC123" # Optional: For multiple identical devices
+    keyboard_layout: "us" # Optional: Keyboard layout ("us", "es", etc.)
+    termination_char: "enter" # "enter", "tab", or "none"
 
   checkout_scanner_1:
     name: "Checkout #1"
     identification:
       vendor_id: 0x60e
       product_id: 0x16c7
-      serial: "DEF456"                     # Required when multiple devices have same VID/PID
-    keyboard_layout: "es"                  # Spanish keyboard layout example
+      serial: "DEF456" # Required when multiple devices have same VID/PID
+    keyboard_layout: "es" # Spanish keyboard layout example
     termination_char: "enter"
 ```
 
@@ -128,6 +129,7 @@ scanners:
 ```
 
 **Available layouts:**
+
 - `us` - US QWERTY (default)
 - `es` - Spanish QWERTY
 
@@ -137,8 +139,8 @@ If no layout is specified, it defaults to US layout.
 
 ```yaml
 homeassistant:
-  discovery_prefix: "homeassistant"        # MQTT discovery prefix (default: "homeassistant")
-  instance_id: "workstation"               # Optional: Unique instance identifier
+  discovery_prefix: "homeassistant" # MQTT discovery prefix (default: "homeassistant")
+  instance_id: "workstation" # Optional: Unique instance identifier
 ```
 
 ## Installation Methods
@@ -179,7 +181,8 @@ services:
 ### Building from Source
 
 Requirements:
-- Go 1.24.0 or later
+
+- Go 1.26.0 or later
 - USB HID development libraries
 
 ```bash
@@ -226,11 +229,13 @@ sudo udevadm trigger
 The application automatically creates Home Assistant sensor entities via MQTT discovery:
 
 #### Main Scanner Sensors
+
 - **Entity ID**: `sensor.{instance_id}_{scanner_id}`
 - **State**: Last scanned barcode value
 - **Attributes**: Scanner ID, keyboard layout, termination character, device info
 
 #### Health Monitoring Sensors (Diagnostic Category)
+
 Each scanner automatically gets a health sensor with diagnostic information:
 
 - **Entity ID**: `sensor.{instance_id}_{scanner_id}_health`
@@ -244,6 +249,7 @@ Each scanner automatically gets a health sensor with diagnostic information:
   - Last scan timestamp
 
 #### Bridge Diagnostics Sensor (Diagnostic Category)
+
 System-wide monitoring sensor:
 
 - **Entity ID**: `sensor.{instance_id}_diagnostics`
@@ -333,7 +339,7 @@ homeassistant-barcode-scanner --log-level debug
 
 ### Requirements
 
-- Go 1.24.0+
+- Go 1.26.0+
 - golangci-lint (for linting)
 - Docker (for containerized builds)
 

@@ -31,12 +31,14 @@ services:
 ### Why Privileged Mode is Required
 
 The karalabe/hid library requires:
+
 1. Direct access to USB HID device nodes (`/dev/hidraw*`)
 2. USB device enumeration capabilities
 3. Low-level hardware abstraction layer access
 4. Kernel driver interface access
 
 These requirements cannot be satisfied with:
+
 - Specific device mounts (`devices:`)
 - Individual capabilities (`cap_add:`)
 - Filesystem volume mounts (`/dev:/dev`, `/sys/*:/sys/*`)
@@ -57,7 +59,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 ENTRYPOINT ["/usr/local/bin/homeassistant-barcode-scanner"]
 
-FROM golang:1.24.7@sha256:87916acb3242b6259a26deaa7953bdc6a3a6762a28d340e4f1448e7b5c27c009 AS build
+FROM golang:1.26.0@sha256:c83e68f3ebb6943a2904fa66348867d108119890a2c6a2e6f07b38d0eb6c25c5 AS build
 ARG PROJECT_NAME=homeassistant-barcode-scanner
 RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc \
@@ -84,7 +86,7 @@ COPY --from=build /src/bin/${PROJECT_NAME} /usr/local/bin/${PROJECT_NAME}
 ### Key Dockerfile Features
 
 1. **Multi-stage build** - Optimizes final image size
-2. **Debian Trixie base** - Ensures glibc compatibility with Go 1.24.7
+2. **Debian Trixie base** - Ensures glibc compatibility with Go 1.26.0
 3. **Pinned SHA256 hashes** - Reproducible builds and security
 4. **CGO enabled** - Required for HID library compilation
 5. **GoReleaser target** - Supports external binary injection
