@@ -149,7 +149,8 @@ func NewIntegration(
 }
 
 func (bem *BridgeEntityManager) publishAllDiscoveryConfigs() error {
-	for _, entity := range bem.entities {
+	for i := range bem.entities {
+		entity := &bem.entities[i]
 		if err := bem.integration.publishBridgeEntityDiscoveryConfig(entity.EntityType, entity.Name, entity.Icon); err != nil {
 			bem.integration.logger.WithError(err).Errorf("Failed to publish %s discovery config", entity.Name)
 			return err
@@ -159,15 +160,14 @@ func (bem *BridgeEntityManager) publishAllDiscoveryConfigs() error {
 }
 
 func (bem *BridgeEntityManager) publishAllStates() {
-	for _, entity := range bem.entities {
-		if err := bem.publishEntityState(entity); err != nil {
-			bem.integration.logger.WithError(err).Errorf("Failed to update %s", entity.Name)
+	for i := range bem.entities {
+		if err := bem.publishEntityState(&bem.entities[i]); err != nil {
+			bem.integration.logger.WithError(err).Errorf("Failed to update %s", bem.entities[i].Name)
 		}
 	}
 }
 
-//nolint:gocritic // BridgeEntity contains function pointers that are lighter as value
-func (bem *BridgeEntityManager) publishEntityState(entity BridgeEntity) error {
+func (bem *BridgeEntityManager) publishEntityState(entity *BridgeEntity) error {
 	topics, _ := bem.integration.generateBridgeEntityTopics(entity.EntityType)
 	status := entity.GetStatus(bem.integration)
 
@@ -185,7 +185,8 @@ func (bem *BridgeEntityManager) publishEntityState(entity BridgeEntity) error {
 }
 
 func (bem *BridgeEntityManager) publishOfflineStates() {
-	for _, entity := range bem.entities {
+	for i := range bem.entities {
+		entity := &bem.entities[i]
 		topics, _ := bem.integration.generateBridgeEntityTopics(entity.EntityType)
 		shutdownState := entity.GetShutdownState(bem.integration)
 		if err := bem.integration.mqtt.Publish(topics.StateTopic, shutdownState, entity.Retain); err != nil {
