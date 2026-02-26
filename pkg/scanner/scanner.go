@@ -96,7 +96,7 @@ func (s *BarcodeScanner) TryInitialConnect() error {
 	}
 
 	if device != nil {
-		device.Close()
+		_ = device.Close()
 	}
 
 	return nil

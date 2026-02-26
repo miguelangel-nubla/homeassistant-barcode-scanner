@@ -35,9 +35,9 @@ logging:
 `
 
 	tempFile := createTempConfig(t, configContent)
-	defer os.Remove(tempFile)
+	defer func() { _ = os.Remove(tempFile) }()
 
-	data, err := os.ReadFile(tempFile)
+	data, err := os.ReadFile(tempFile) // #nosec G304
 	if err != nil {
 		t.Fatalf("Failed to read temp config: %v", err)
 	}
