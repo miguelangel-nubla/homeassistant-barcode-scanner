@@ -57,6 +57,6 @@ linters:
         linters:
           - funlen
       - path: pkg/config/config.go
-        text: "G117:"
+        text: "G304:"
         linters:
           - gosec

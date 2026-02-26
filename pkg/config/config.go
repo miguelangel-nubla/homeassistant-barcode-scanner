@@ -58,7 +58,7 @@ func (m *MQTTConfig) IsSecure() bool {
 }
 
 func LoadConfig(configPath string) (*Config, error) {
-	data, err := os.ReadFile(configPath)
+	data, err := os.ReadFile(configPath) // #nosec G304
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
