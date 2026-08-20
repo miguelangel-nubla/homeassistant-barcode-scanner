@@ -2,8 +2,6 @@ package scanner
 
 import "errors"
 
-var (
-	ErrDeviceOpenFailed       = errors.New("failed to open device")
-	ErrReconnectionInProgress = errors.New("reconnection already in progress")
-	ErrScannerStopped         = errors.New("scanner stopped")
-)
+// ErrDeviceOpenFailed indicates a matching device was found but could not be
+// opened, which usually points to missing permissions (udev rules on Linux).
+var ErrDeviceOpenFailed = errors.New("failed to open device")

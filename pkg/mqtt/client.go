@@ -33,7 +33,7 @@ type Client struct {
 	onDisconnect func()
 }
 
-func NewClient(cfg *config.MQTTConfig, willTopic string, logger *logrus.Logger) (*Client, error) {
+func NewClient(cfg *config.MQTTConfig, willTopic string, logger *logrus.Logger) *Client {
 	c := &Client{
 		config:    cfg,
 		logger:    logger,
@@ -43,7 +43,7 @@ func NewClient(cfg *config.MQTTConfig, willTopic string, logger *logrus.Logger) 
 	opts := c.buildClientOptions()
 	c.client = mqtt.NewClient(opts)
 
-	return c, nil
+	return c
 }
 
 func (c *Client) buildClientOptions() *mqtt.ClientOptions {
@@ -76,7 +76,7 @@ func (c *Client) buildClientOptions() *mqtt.ClientOptions {
 	}
 
 	if c.willTopic != "" {
-		opts.SetWill(c.willTopic, "offline", c.config.QoS, true)
+		opts.SetWill(c.willTopic, "offline", c.config.GetQoS(), true)
 	}
 
 	return opts
@@ -151,45 +151,13 @@ func (c *Client) Publish(topic, payload string, retain bool) error {
 		return fmt.Errorf("MQTT client is not connected")
 	}
 
-	token := c.client.Publish(topic, c.config.QoS, retain, payload)
+	token := c.client.Publish(topic, c.config.GetQoS(), retain, payload)
 	token.Wait()
 	if err := token.Error(); err != nil {
 		c.logger.WithFields(map[string]any{
 			"topic":  topic,
 			"retain": retain,
 		}).WithError(err).Error("MQTT publish failed")
-		return err
-	}
-
-	return nil
-}
-
-func (c *Client) PublishWithRetry(topic, payload string, maxRetries int, retryDelay time.Duration) error {
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		if err := c.attemptPublish(topic, payload, attempt, maxRetries); err == nil {
-			return nil
-		}
-
-		if attempt < maxRetries {
-			time.Sleep(retryDelay)
-		}
-	}
-
-	return fmt.Errorf("failed to publish to %s after %d attempts", topic, maxRetries+1)
-}
-
-func (c *Client) attemptPublish(topic, payload string, attempt, maxRetries int) error {
-	if !c.IsConnected() {
-		return fmt.Errorf("not connected")
-	}
-
-	if err := c.Publish(topic, payload, false); err != nil {
-		if attempt == maxRetries {
-			c.logger.WithFields(map[string]any{
-				"topic":    topic,
-				"attempts": maxRetries + 1,
-			}).WithError(err).Error("MQTT publish failed after all retries")
-		}
 		return err
 	}
 

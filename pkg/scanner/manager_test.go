@@ -4,184 +4,150 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sirupsen/logrus"
-
 	"github.com/miguelangel-nubla/homeassistant-barcode-scanner/pkg/config"
 )
 
-func TestNewScannerManager(t *testing.T) {
-	configs := []config.ScannerConfig{}
-	logger := logrus.New()
-	manager := NewScannerManager(configs, logger)
-
-	if manager == nil {
-		t.Fatal("Expected manager to be created")
-	}
-
-	if manager.logger != logger {
-		t.Error("Expected logger to be stored")
-	}
-
-	if manager.scanners == nil {
-		t.Error("Expected scanners map to be initialized")
-	}
-
-	if manager.configs == nil {
-		t.Error("Expected configs slice to be initialized")
+func testScannerConfig(id string) config.ScannerConfig {
+	return config.ScannerConfig{
+		ID:              id,
+		Name:            "Test Scanner",
+		Identification:  testIdent(),
+		KeyboardLayout:  "us",
+		TerminationChar: "enter",
 	}
 }
 
 func TestNewScannerManagerFromMap(t *testing.T) {
-	scannerConfigs := map[string]config.ScannerConfig{
-		"test_scanner": {
-			ID:   "test_scanner",
-			Name: "Test Scanner",
-			Identification: config.ScannerIdentification{
-				VendorID:  0x60e,
-				ProductID: 0x16c7,
-			},
-			KeyboardLayout:  "us",
-			TerminationChar: "enter",
-		},
-	}
-
-	logger := logrus.New()
-	manager := NewScannerManagerFromMap(scannerConfigs, logger)
-
-	if manager == nil {
-		t.Fatal("Expected manager to be created")
-	}
+	manager := NewScannerManagerFromMap(map[string]config.ScannerConfig{
+		"test_scanner": testScannerConfig("test_scanner"),
+	}, testLogger())
 
 	if len(manager.configs) != 1 {
-		t.Errorf("Expected 1 config, got %d", len(manager.configs))
+		t.Fatalf("expected 1 config, got %d", len(manager.configs))
 	}
-
 	if manager.configs[0].ID != "test_scanner" {
-		t.Errorf("Expected config ID 'test_scanner', got %s", manager.configs[0].ID)
+		t.Errorf("expected config ID 'test_scanner', got %s", manager.configs[0].ID)
 	}
 }
 
-func TestScannerManager_SetReconnectDelay(t *testing.T) {
-	configs := []config.ScannerConfig{}
-	logger := logrus.New()
-	manager := NewScannerManager(configs, logger)
+func TestScannerManager_ReconnectDelayAppliedToNewScanners(t *testing.T) {
+	manager := NewScannerManager(nil, testLogger())
+	manager.SetReconnectDelay(9 * time.Second)
 
-	delay := 10 * time.Second
-	manager.SetReconnectDelay(delay)
+	cfg := testScannerConfig("delayed")
+	if err := manager.startScanner(&cfg); err != nil {
+		t.Fatalf("startScanner() error: %v", err)
+	}
+	defer func() { _ = manager.Stop() }()
 
-	// Note: reconnectDelay is not directly accessible, but method should not panic
-	if manager == nil {
-		t.Error("Expected manager to remain valid after setting reconnect delay")
+	scanner := manager.GetScanner("delayed")
+	if scanner == nil {
+		t.Fatal("expected scanner to be registered")
+	}
+	if got := scanner.getReconnectDelay(); got != 9*time.Second {
+		t.Errorf("expected reconnect delay 9s applied to new scanner, got %v", got)
 	}
 }
 
-func TestScannerManager_SetCallbacks(t *testing.T) {
-	configs := []config.ScannerConfig{}
-	logger := logrus.New()
-	manager := NewScannerManager(configs, logger)
+func TestScannerManager_ReconnectDelayAppliedToExistingScanners(t *testing.T) {
+	manager := NewScannerManager(nil, testLogger())
 
+	cfg := testScannerConfig("existing")
+	if err := manager.startScanner(&cfg); err != nil {
+		t.Fatalf("startScanner() error: %v", err)
+	}
+	defer func() { _ = manager.Stop() }()
+
+	manager.SetReconnectDelay(4 * time.Second)
+
+	scanner := manager.GetScanner("existing")
+	if got := scanner.getReconnectDelay(); got != 4*time.Second {
+		t.Errorf("expected reconnect delay 4s applied to existing scanner, got %v", got)
+	}
+}
+
+func TestScannerManager_ScanCallbackReceivesScannerID(t *testing.T) {
+	manager := NewScannerManager(nil, testLogger())
+
+	type scanEvent struct {
+		scannerID string
+		barcode   string
+	}
+	var events []scanEvent
 	manager.SetOnScanCallback(func(scannerID, barcode string) {
-		// Callback set successfully
+		events = append(events, scanEvent{scannerID, barcode})
 	})
 
-	manager.SetOnConnectionChangeCallback(func(scannerID string, connected bool) {
-		// Callback set successfully
-	})
-
-	// Note: callback fields are not directly accessible, but methods should not panic
-	if manager == nil {
-		t.Error("Expected manager to remain valid after setting callbacks")
+	cfg := testScannerConfig("front_desk")
+	if err := manager.startScanner(&cfg); err != nil {
+		t.Fatalf("startScanner() error: %v", err)
 	}
+	defer func() { _ = manager.Stop() }()
 
-	// We can't directly test the callbacks without integration test setup
-	// This test verifies the methods can be called without panic
+	scanner := manager.GetScanner("front_desk")
+	typeKeys(scanner.hidProcessor, 0, 0x04, 0x05, 0x06)
+	scanner.hidProcessor.ProcessData(report(0, hidKeyEnter))
+
+	if len(events) != 1 {
+		t.Fatalf("expected 1 scan event, got %d", len(events))
+	}
+	if events[0].scannerID != "front_desk" || events[0].barcode != "abc" {
+		t.Errorf("expected event {front_desk abc}, got %+v", events[0])
+	}
 }
 
 func TestScannerManager_GetScanner_NotFound(t *testing.T) {
-	configs := []config.ScannerConfig{}
-	logger := logrus.New()
-	manager := NewScannerManager(configs, logger)
+	manager := NewScannerManager(nil, testLogger())
 
-	scanner := manager.GetScanner("nonexistent")
-	if scanner != nil {
-		t.Error("Expected nil for nonexistent scanner")
+	if manager.GetScanner("nonexistent") != nil {
+		t.Error("expected nil for nonexistent scanner")
 	}
 }
 
-func TestScannerManager_Start_NoConfigs(t *testing.T) {
-	configs := []config.ScannerConfig{}
-	logger := logrus.New()
-	manager := NewScannerManager(configs, logger)
+func TestScannerManager_StartAndStop_NoConfigs(t *testing.T) {
+	manager := NewScannerManager(nil, testLogger())
 
-	err := manager.Start()
-	if err != nil {
-		t.Errorf("Expected no error starting manager with no configs, got: %v", err)
+	if err := manager.Start(); err != nil {
+		t.Errorf("Start() with no configs error: %v", err)
+	}
+	if err := manager.Stop(); err != nil {
+		t.Errorf("Stop() error: %v", err)
 	}
 }
 
-func TestScannerManager_Stop_NotStarted(t *testing.T) {
-	configs := []config.ScannerConfig{}
-	logger := logrus.New()
-	manager := NewScannerManager(configs, logger)
+func TestScannerManager_StopIsIdempotent(t *testing.T) {
+	manager := NewScannerManager(nil, testLogger())
 
-	err := manager.Stop()
-	if err != nil {
-		t.Errorf("Expected no error stopping manager that wasn't started, got: %v", err)
+	cfg := testScannerConfig("stopper")
+	if err := manager.startScanner(&cfg); err != nil {
+		t.Fatalf("startScanner() error: %v", err)
+	}
+
+	if err := manager.Stop(); err != nil {
+		t.Errorf("first Stop() error: %v", err)
+	}
+	if err := manager.Stop(); err != nil {
+		t.Errorf("second Stop() error: %v", err)
+	}
+
+	if manager.GetScanner("stopper") != nil {
+		t.Error("expected scanners map to be cleared after Stop")
 	}
 }
 
-func TestValidScannerConfig(t *testing.T) {
-	scannerConfig := config.ScannerConfig{
-		ID:   "valid_scanner",
-		Name: "Valid Scanner",
-		Identification: config.ScannerIdentification{
-			VendorID:  0x60e,
-			ProductID: 0x16c7,
-			Serial:    "ABC123",
-		},
-		KeyboardLayout:  "us",
-		TerminationChar: "enter",
-	}
+func TestScannerManager_StartWithUnpluggedScannerSucceeds(t *testing.T) {
+	// A configured scanner that is not plugged in must not prevent startup;
+	// the reconnect loop picks it up later.
+	manager := NewScannerManagerFromMap(map[string]config.ScannerConfig{
+		"unplugged": testScannerConfig("unplugged"),
+	}, testLogger())
 
-	if scannerConfig.ID == "" {
-		t.Error("Expected scanner ID to be set")
+	if err := manager.Start(); err != nil {
+		t.Fatalf("expected Start() to succeed with unplugged scanner, got: %v", err)
 	}
+	defer func() { _ = manager.Stop() }()
 
-	if scannerConfig.Identification.VendorID == 0 {
-		t.Error("Expected vendor ID to be set")
-	}
-
-	if scannerConfig.Identification.ProductID == 0 {
-		t.Error("Expected product ID to be set")
-	}
-
-	if scannerConfig.KeyboardLayout == "" {
-		t.Error("Expected keyboard layout to be set")
-	}
-
-	if scannerConfig.TerminationChar == "" {
-		t.Error("Expected termination char to be set")
-	}
-}
-
-func TestScannerConfigWithDefaults(t *testing.T) {
-	minimalConfig := config.ScannerConfig{
-		ID: "minimal_scanner",
-		Identification: config.ScannerIdentification{
-			VendorID:  0x60e,
-			ProductID: 0x16c7,
-		},
-		KeyboardLayout:  "us",
-		TerminationChar: "enter",
-	}
-
-	if minimalConfig.Name == "" {
-		if minimalConfig.Name != "" {
-			t.Errorf("Expected empty name for minimal config, got %s", minimalConfig.Name)
-		}
-	}
-
-	if minimalConfig.Identification.Serial != "" {
-		t.Errorf("Expected empty serial for minimal config, got %s", minimalConfig.Identification.Serial)
+	if manager.GetScanner("unplugged") == nil {
+		t.Error("expected scanner to be registered and waiting for the device")
 	}
 }

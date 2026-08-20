@@ -3,20 +3,11 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
-
-	"gopkg.in/yaml.v3"
 )
 
-const defaultKeyboardLayout = "us"
-
-func TestLoadConfig_BasicParsing(t *testing.T) {
-	configContent := `
-mqtt:
-  broker_url: "mqtt://localhost:1883"
-  username: "test"
-  password: "test"
-
+const minimalScannerYAML = `
 scanners:
   test_scanner:
     name: "Test Scanner"
@@ -24,53 +15,177 @@ scanners:
       vendor_id: 0x60e
       product_id: 0x16c7
     termination_char: "enter"
-
-homeassistant:
-  discovery_prefix: "homeassistant"
-  instance_id: "test"
-
-logging:
-  level: "info"
-  format: "text"
 `
 
-	tempFile := createTempConfig(t, configContent)
-	defer func() { _ = os.Remove(tempFile) }()
+func loadConfigFromString(t *testing.T, content string) (*Config, error) {
+	t.Helper()
 
-	data, err := os.ReadFile(tempFile) // #nosec G304
+	tempFile := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(tempFile, []byte(content), 0o600); err != nil {
+		t.Fatalf("failed to create temp config file: %v", err)
+	}
+	return LoadConfig(tempFile)
+}
+
+func mustLoadConfig(t *testing.T, content string) *Config {
+	t.Helper()
+
+	cfg, err := loadConfigFromString(t, content)
 	if err != nil {
-		t.Fatalf("Failed to read temp config: %v", err)
+		t.Fatalf("LoadConfig() error: %v", err)
 	}
+	return cfg
+}
 
-	var config Config
-	err = yaml.Unmarshal(data, &config)
-	if err != nil {
-		t.Fatalf("Expected no parsing error, got: %v", err)
+func TestLoadConfig_Defaults(t *testing.T) {
+	cfg := mustLoadConfig(t, minimalScannerYAML)
+
+	if cfg.MQTT.BrokerURL != DefaultBrokerURL {
+		t.Errorf("expected default broker URL %q, got %q", DefaultBrokerURL, cfg.MQTT.BrokerURL)
 	}
-
-	if config.MQTT.BrokerURL != "mqtt://localhost:1883" {
-		t.Errorf("Expected broker URL 'mqtt://localhost:1883', got: %s", config.MQTT.BrokerURL)
+	if cfg.MQTT.ClientID != DefaultClientID {
+		t.Errorf("expected default client ID %q, got %q", DefaultClientID, cfg.MQTT.ClientID)
 	}
-
-	if len(config.Scanners) != 1 {
-		t.Errorf("Expected 1 scanner, got: %d", len(config.Scanners))
+	if cfg.MQTT.GetQoS() != DefaultQoS {
+		t.Errorf("expected default QoS %d, got %d", DefaultQoS, cfg.MQTT.GetQoS())
 	}
-
-	scanner := config.Scanners["test_scanner"]
-	if scanner.Name != "Test Scanner" {
-		t.Errorf("Expected scanner name 'Test Scanner', got: %s", scanner.Name)
+	if cfg.MQTT.KeepAlive != DefaultKeepAlive {
+		t.Errorf("expected default keep alive %d, got %d", DefaultKeepAlive, cfg.MQTT.KeepAlive)
+	}
+	if cfg.HomeAssistant.DiscoveryPrefix != "homeassistant" {
+		t.Errorf("expected default discovery prefix 'homeassistant', got %q", cfg.HomeAssistant.DiscoveryPrefix)
+	}
+	if cfg.HomeAssistant.InstanceID == "" {
+		t.Error("expected instance ID to default to hostname")
+	}
+	if cfg.Logging.Level != "info" || cfg.Logging.Format != "text" {
+		t.Errorf("expected default logging info/text, got %s/%s", cfg.Logging.Level, cfg.Logging.Format)
 	}
 }
 
-func TestKeyboardLayoutDefault(t *testing.T) {
-	scanner := &ScannerConfig{}
+func TestLoadConfig_ExplicitQoSZeroIsPreserved(t *testing.T) {
+	cfg := mustLoadConfig(t, `
+mqtt:
+  qos: 0
+`+minimalScannerYAML)
 
-	if scanner.KeyboardLayout == "" {
-		scanner.KeyboardLayout = defaultKeyboardLayout
+	if cfg.MQTT.GetQoS() != 0 {
+		t.Errorf("expected explicit QoS 0 to be preserved, got %d", cfg.MQTT.GetQoS())
+	}
+}
+
+func TestLoadConfig_InvalidQoSRejected(t *testing.T) {
+	_, err := loadConfigFromString(t, `
+mqtt:
+  qos: 3
+`+minimalScannerYAML)
+
+	if err == nil || !strings.Contains(err.Error(), "qos") {
+		t.Errorf("expected QoS validation error, got: %v", err)
+	}
+}
+
+func TestLoadConfig_ScannerIDDerivedFromMapKey(t *testing.T) {
+	cfg := mustLoadConfig(t, minimalScannerYAML)
+
+	scanner := cfg.Scanners["test_scanner"]
+	if scanner.ID != "test_scanner" {
+		t.Errorf("expected scanner ID 'test_scanner' from map key, got %q", scanner.ID)
+	}
+}
+
+func TestLoadConfig_KeyboardLayoutDefaultIsPersisted(t *testing.T) {
+	cfg := mustLoadConfig(t, minimalScannerYAML)
+
+	scanner := cfg.Scanners["test_scanner"]
+	if scanner.KeyboardLayout != DefaultKeyboardLayout {
+		t.Errorf("expected default keyboard layout %q persisted in config map, got %q",
+			DefaultKeyboardLayout, scanner.KeyboardLayout)
+	}
+}
+
+func TestLoadConfig_ScannerOptionsAreNormalized(t *testing.T) {
+	cfg := mustLoadConfig(t, `
+scanners:
+  test_scanner:
+    identification:
+      vendor_id: 0x60e
+      product_id: 0x16c7
+    termination_char: "ENTER"
+    keyboard_layout: "ES"
+`)
+
+	scanner := cfg.Scanners["test_scanner"]
+	if scanner.TerminationChar != "enter" {
+		t.Errorf("expected termination char normalized to 'enter', got %q", scanner.TerminationChar)
+	}
+	if scanner.KeyboardLayout != "es" {
+		t.Errorf("expected keyboard layout normalized to 'es', got %q", scanner.KeyboardLayout)
+	}
+}
+
+func TestLoadConfig_UnknownKeyboardLayoutRejected(t *testing.T) {
+	_, err := loadConfigFromString(t, `
+scanners:
+  test_scanner:
+    identification:
+      vendor_id: 0x60e
+      product_id: 0x16c7
+    termination_char: "enter"
+    keyboard_layout: "klingon"
+`)
+
+	if err == nil || !strings.Contains(err.Error(), "keyboard_layout") {
+		t.Errorf("expected keyboard layout validation error, got: %v", err)
+	}
+}
+
+func TestLoadConfig_NoScannersRejected(t *testing.T) {
+	_, err := loadConfigFromString(t, `
+mqtt:
+  broker_url: "mqtt://localhost:1883"
+`)
+
+	if err == nil || !strings.Contains(err.Error(), "scanner") {
+		t.Errorf("expected error for missing scanners, got: %v", err)
+	}
+}
+
+func TestLoadConfig_InvalidBrokerSchemeRejected(t *testing.T) {
+	_, err := loadConfigFromString(t, `
+mqtt:
+  broker_url: "http://localhost:1883"
+`+minimalScannerYAML)
+
+	if err == nil || !strings.Contains(err.Error(), "broker_url") {
+		t.Errorf("expected broker URL validation error, got: %v", err)
+	}
+}
+
+func TestLoadConfig_MissingFile(t *testing.T) {
+	_, err := LoadConfig(filepath.Join(t.TempDir(), "does-not-exist.yaml"))
+	if err == nil {
+		t.Error("expected error for missing config file")
+	}
+}
+
+func TestLoadConfig_MalformedYAML(t *testing.T) {
+	_, err := loadConfigFromString(t, "scanners: [not: valid")
+	if err == nil {
+		t.Error("expected error for malformed YAML")
+	}
+}
+
+func TestMQTTConfig_GetQoS_NilDefaults(t *testing.T) {
+	cfg := &MQTTConfig{}
+	if cfg.GetQoS() != DefaultQoS {
+		t.Errorf("expected nil QoS to default to %d, got %d", DefaultQoS, cfg.GetQoS())
 	}
 
-	if scanner.KeyboardLayout != defaultKeyboardLayout {
-		t.Errorf("Expected default keyboard layout '%s', got: %s", defaultKeyboardLayout, scanner.KeyboardLayout)
+	zero := byte(0)
+	cfg.QoS = &zero
+	if cfg.GetQoS() != 0 {
+		t.Errorf("expected explicit QoS 0, got %d", cfg.GetQoS())
 	}
 }
 
@@ -88,19 +203,18 @@ func TestValidateTerminationChar(t *testing.T) {
 	}
 
 	config := &Config{}
-	scanner := &ScannerConfig{}
+	validChars := []string{"enter", "tab", "none"}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			scanner.TerminationChar = tt.termChar
-			validChars := []string{"enter", "tab", "none"}
+			scanner := &ScannerConfig{TerminationChar: tt.termChar}
 			err := config.validateTerminationChar("test", scanner, validChars)
 
 			if tt.expectError && err == nil {
-				t.Errorf("Expected error for termination char '%s', but got none", tt.termChar)
+				t.Errorf("expected error for termination char %q", tt.termChar)
 			}
 			if !tt.expectError && err != nil {
-				t.Errorf("Expected no error for termination char '%s', but got: %v", tt.termChar, err)
+				t.Errorf("expected no error for termination char %q, got: %v", tt.termChar, err)
 			}
 		})
 	}
@@ -133,10 +247,10 @@ func TestValidateScannerIdentification(t *testing.T) {
 			err := config.validateScannerIdentification("test", scanner)
 
 			if tt.expectError && err == nil {
-				t.Errorf("Expected error for VID:PID %04x:%04x, but got none", tt.vendorID, tt.productID)
+				t.Errorf("expected error for VID:PID %04x:%04x", tt.vendorID, tt.productID)
 			}
 			if !tt.expectError && err != nil {
-				t.Errorf("Expected no error for VID:PID %04x:%04x, but got: %v", tt.vendorID, tt.productID, err)
+				t.Errorf("expected no error for VID:PID %04x:%04x, got: %v", tt.vendorID, tt.productID, err)
 			}
 		})
 	}
@@ -164,37 +278,13 @@ func TestMQTTConfig_IsSecure(t *testing.T) {
 	}
 }
 
-func TestValidateMQTT_MissingBrokerURL(t *testing.T) {
-	config := &Config{
-		MQTT: MQTTConfig{},
+func TestLoadConfig_InvalidLoggingRejected(t *testing.T) {
+	_, err := loadConfigFromString(t, `
+logging:
+  level: "verbose"
+`+minimalScannerYAML)
+
+	if err == nil || !strings.Contains(err.Error(), "logging.level") {
+		t.Errorf("expected logging level validation error, got: %v", err)
 	}
-
-	err := config.validateMQTT()
-	if err == nil {
-		t.Error("Expected error for missing broker URL")
-	}
-}
-
-func TestValidateHomeAssistant_MissingDiscoveryPrefix(t *testing.T) {
-	config := &Config{
-		HomeAssistant: HomeAssistantConfig{},
-	}
-
-	err := config.validateHomeAssistant()
-	if err == nil {
-		t.Error("Expected error for missing discovery prefix")
-	}
-}
-
-func createTempConfig(t *testing.T, content string) string {
-	t.Helper()
-
-	tempDir := t.TempDir()
-	tempFile := filepath.Join(tempDir, "config.yaml")
-
-	if err := os.WriteFile(tempFile, []byte(content), 0600); err != nil {
-		t.Fatalf("Failed to create temp config file: %v", err)
-	}
-
-	return tempFile
 }

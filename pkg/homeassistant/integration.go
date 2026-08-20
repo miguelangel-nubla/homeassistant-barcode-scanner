@@ -4,19 +4,28 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/karalabe/hid"
 	"github.com/sirupsen/logrus"
 
 	"github.com/miguelangel-nubla/homeassistant-barcode-scanner/pkg/config"
-	"github.com/miguelangel-nubla/homeassistant-barcode-scanner/pkg/mqtt"
 )
 
 const (
 	StatusOffline = "offline"
 	StatusUnknown = "unknown"
 )
+
+// MQTTPublisher is the part of the MQTT client the integration depends on.
+// *mqtt.Client satisfies it; tests use a fake.
+type MQTTPublisher interface {
+	Publish(topic, payload string, retain bool) error
+	IsConnected() bool
+	SetOnConnectCallback(func())
+	SetOnDisconnectCallback(func())
+}
 
 type DeviceInfo struct {
 	Identifiers  []string `json:"identifiers"`
@@ -48,14 +57,20 @@ type SensorConfig struct {
 }
 
 type Integration struct {
-	mqtt             *mqtt.Client
+	mqtt             MQTTPublisher
 	config           *config.HomeAssistantConfig
 	logger           *logrus.Logger
 	version          string
-	scanners         map[string]*ScannerDevice
-	scannerConfigs   map[string]*config.ScannerConfig
 	bridgeDeviceInfo *DeviceInfo
 	bridgeEntities   *BridgeEntityManager
+
+	// mu guards scanners and scannerConfigs, including the Health metrics
+	// inside each ScannerDevice. Callbacks arrive concurrently from
+	// per-scanner goroutines and from the MQTT client's goroutines, so every
+	// exported method takes the lock; internal helpers assume it is held.
+	mu             sync.Mutex
+	scanners       map[string]*ScannerDevice
+	scannerConfigs map[string]*config.ScannerConfig
 }
 
 type ScannerHealthMetrics struct {
@@ -101,7 +116,7 @@ type BridgeEntityManager struct {
 }
 
 func NewIntegration(
-	mqttClient *mqtt.Client,
+	mqttClient MQTTPublisher,
 	haConfig *config.HomeAssistantConfig,
 	version string,
 	logger *logrus.Logger,
@@ -211,6 +226,9 @@ func (integration *Integration) Start() error {
 func (integration *Integration) Stop() error {
 	integration.logger.Info("Stopping Home Assistant integration")
 
+	integration.mu.Lock()
+	defer integration.mu.Unlock()
+
 	if integration.mqtt.IsConnected() {
 		for scannerID := range integration.scanners {
 			if err := integration.publishScannerAvailability(scannerID, "offline"); err != nil {
@@ -234,27 +252,17 @@ func (integration *Integration) Stop() error {
 func (integration *Integration) AddScanner(scannerID, scannerName string, scannerConfig *config.ScannerConfig) {
 	integration.logger.Debugf("Registering scanner configuration: %s", scannerID)
 
+	integration.mu.Lock()
+	defer integration.mu.Unlock()
+
 	integration.scannerConfigs[scannerID] = scannerConfig
 	integration.logger.Debugf("Stored config for scanner %s, will create HA device when hardware connects", scannerID)
 }
 
-func (integration *Integration) RemoveScanner(scannerID string) {
-	integration.logger.Debugf("Removing scanner from Home Assistant integration: %s", scannerID)
-
-	if integration.mqtt.IsConnected() {
-		scanner := integration.scanners[scannerID]
-		if scanner != nil {
-			if err := integration.publishScannerAvailability(scannerID, "offline"); err != nil {
-				integration.logger.Errorf("Failed to publish offline status for removed scanner %s: %v", scannerID, err)
-			}
-		}
-	}
-
-	delete(integration.scanners, scannerID)
-	delete(integration.scannerConfigs, scannerID)
-}
-
 func (integration *Integration) SetScannerDeviceInfo(scannerID string, deviceInfo *hid.DeviceInfo) {
+	integration.mu.Lock()
+	defer integration.mu.Unlock()
+
 	if _, exists := integration.scannerConfigs[scannerID]; !exists {
 		integration.logger.Errorf("Scanner config %s not found, cannot create HA device", scannerID)
 		return
@@ -322,6 +330,9 @@ func (integration *Integration) SetScannerDeviceInfo(scannerID string, deviceInf
 }
 
 func (integration *Integration) SetScannerConnected(scannerID string, connected bool) error {
+	integration.mu.Lock()
+	defer integration.mu.Unlock()
+
 	scanner, exists := integration.scanners[scannerID]
 	if !exists {
 		return fmt.Errorf("scanner %s not found", scannerID)
@@ -369,6 +380,9 @@ func (integration *Integration) SetScannerConnected(scannerID string, connected 
 }
 
 func (integration *Integration) PublishBarcode(scannerID, barcode string) error {
+	integration.mu.Lock()
+	defer integration.mu.Unlock()
+
 	scanner, exists := integration.scanners[scannerID]
 	if !exists {
 		return fmt.Errorf("scanner %s not found", scannerID)
@@ -397,8 +411,7 @@ func (integration *Integration) PublishBarcode(scannerID, barcode string) error 
 }
 
 func (integration *Integration) GenerateBridgeAvailabilityTopic() string {
-	bridgeID := generateBridgeDeviceID(integration.config)
-	return fmt.Sprintf("%s/sensor/%s/availability", integration.config.DiscoveryPrefix, bridgeID)
+	return GenerateBridgeAvailabilityTopic(integration.config)
 }
 
 func GenerateBridgeAvailabilityTopic(haConfig *config.HomeAssistantConfig) string {
@@ -454,6 +467,9 @@ func (integration *Integration) getScannerSummaryStatus() string {
 
 func (integration *Integration) handleConnect() {
 	integration.logger.Info("MQTT connected, publishing bridge availability and discovery configs")
+
+	integration.mu.Lock()
+	defer integration.mu.Unlock()
 
 	if err := integration.bridgeEntities.publishAllDiscoveryConfigs(); err != nil {
 		integration.logger.WithError(err).Error("Failed to publish bridge entity discovery configs")

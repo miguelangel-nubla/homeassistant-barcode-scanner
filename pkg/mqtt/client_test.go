@@ -1,6 +1,7 @@
 package mqtt
 
 import (
+	"io"
 	"testing"
 	"time"
 
@@ -9,227 +10,125 @@ import (
 	"github.com/miguelangel-nubla/homeassistant-barcode-scanner/pkg/config"
 )
 
-func TestNewClient_ValidConfig(t *testing.T) {
+func testLogger() *logrus.Logger {
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+	return logger
+}
+
+func testClient() *Client {
 	cfg := &config.MQTTConfig{
 		BrokerURL: "mqtt://localhost:1883",
 		ClientID:  "test-client",
-		QoS:       1,
+		KeepAlive: 60,
+	}
+	return NewClient(cfg, "test/will", testLogger())
+}
+
+func TestNewClient(t *testing.T) {
+	cfg := &config.MQTTConfig{
+		BrokerURL: "mqtt://localhost:1883",
+		ClientID:  "test-client",
 		KeepAlive: 60,
 	}
 
-	logger := logrus.New()
-	willTopic := "test/will"
-
-	client, err := NewClient(cfg, willTopic, logger)
-	if err != nil {
-		t.Fatalf("Expected no error creating client, got: %v", err)
-	}
-
+	client := NewClient(cfg, "test/will", testLogger())
 	if client == nil {
-		t.Fatal("Expected client to be created")
+		t.Fatal("expected client to be created")
 	}
 
 	if client.config != cfg {
-		t.Error("Expected config to be stored")
+		t.Error("expected config to be stored")
 	}
-
-	if client.logger != logger {
-		t.Error("Expected logger to be stored")
-	}
-}
-
-func TestNewClient_InvalidBrokerURL(t *testing.T) {
-	cfg := &config.MQTTConfig{
-		BrokerURL: "invalid-url",
-		ClientID:  "test-client",
-	}
-
-	logger := logrus.New()
-
-	client, err := NewClient(cfg, "test/will", logger)
-	// NewClient might not validate URL format, it just creates the client
-	if err != nil {
-		t.Logf("NewClient correctly rejected invalid URL: %v", err)
-	} else {
-		t.Log("NewClient accepted invalid URL (validation happens at connect time)")
-		// Verify client was still created
-		if client == nil {
-			t.Error("Expected client to be created even with invalid URL")
-		}
+	if client.willTopic != "test/will" {
+		t.Errorf("expected will topic 'test/will', got %q", client.willTopic)
 	}
 }
 
 func TestClient_IsConnected_InitiallyFalse(t *testing.T) {
-	cfg := &config.MQTTConfig{
-		BrokerURL: "mqtt://localhost:1883",
-		ClientID:  "test-client",
-	}
-
-	logger := logrus.New()
-	client, err := NewClient(cfg, "test/will", logger)
-	if err != nil {
-		t.Fatalf("Expected no error creating client, got: %v", err)
-	}
+	client := testClient()
 
 	if client.IsConnected() {
-		t.Error("Expected client to initially not be connected")
+		t.Error("expected client to initially not be connected")
 	}
 }
 
 func TestClient_SetCallbacks(t *testing.T) {
-	cfg := &config.MQTTConfig{
-		BrokerURL: "mqtt://localhost:1883",
-		ClientID:  "test-client",
-	}
-
-	logger := logrus.New()
-	client, err := NewClient(cfg, "test/will", logger)
-	if err != nil {
-		t.Fatalf("Expected no error creating client, got: %v", err)
-	}
+	client := testClient()
 
 	connectCalled := false
 	disconnectCalled := false
 
-	client.SetOnConnectCallback(func() {
-		connectCalled = true
-	})
+	client.SetOnConnectCallback(func() { connectCalled = true })
+	client.SetOnDisconnectCallback(func() { disconnectCalled = true })
 
-	client.SetOnDisconnectCallback(func() {
-		disconnectCalled = true
-	})
-
-	if client.onConnect == nil {
-		t.Error("Expected connect callback to be set")
-	}
-
-	if client.onDisconnect == nil {
-		t.Error("Expected disconnect callback to be set")
+	if client.onConnect == nil || client.onDisconnect == nil {
+		t.Fatal("expected callbacks to be set")
 	}
 
 	client.onConnect()
-	if !connectCalled {
-		t.Error("Expected connect callback to be called")
-	}
-
 	client.onDisconnect()
-	if !disconnectCalled {
-		t.Error("Expected disconnect callback to be called")
-	}
-}
 
-func TestMQTTConfig_IsSecure(t *testing.T) {
-	tests := []struct {
-		name      string
-		brokerURL string
-		expected  bool
-	}{
-		{"Plain MQTT", "mqtt://localhost:1883", false},
-		{"Secure MQTT", "mqtts://localhost:8883", true},
-		{"WebSocket", "ws://localhost:9001", false},
-		{"Secure WebSocket", "wss://localhost:9002", true},
-		{"TCP", "tcp://localhost:1883", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.MQTTConfig{BrokerURL: tt.brokerURL}
-			if got := cfg.IsSecure(); got != tt.expected {
-				t.Errorf("IsSecure() = %v, expected %v", got, tt.expected)
-			}
-		})
+	if !connectCalled || !disconnectCalled {
+		t.Error("expected callbacks to be invoked")
 	}
 }
 
 func TestClient_WaitForConnection_Timeout(t *testing.T) {
-	cfg := &config.MQTTConfig{
-		BrokerURL: "mqtt://localhost:1883",
-		ClientID:  "test-client",
-	}
-
-	logger := logrus.New()
-	client, err := NewClient(cfg, "test/will", logger)
-	if err != nil {
-		t.Fatalf("Expected no error creating client, got: %v", err)
-	}
+	client := testClient()
 
 	start := time.Now()
-	err = client.WaitForConnection(100 * time.Millisecond)
+	err := client.WaitForConnection(100 * time.Millisecond)
 	elapsed := time.Since(start)
 
 	if err == nil {
-		t.Error("Expected connection to timeout and return error")
+		t.Error("expected connection wait to time out")
 	}
-
 	if elapsed < 100*time.Millisecond {
-		t.Error("Expected to wait at least 100ms")
+		t.Error("expected to wait at least 100ms")
 	}
-
-	if elapsed > 200*time.Millisecond {
-		t.Error("Expected to timeout around 100ms, but waited too long")
-	}
-}
-
-func TestClient_PublishRetained_NotConnected(t *testing.T) {
-	cfg := &config.MQTTConfig{
-		BrokerURL: "mqtt://localhost:1883",
-		ClientID:  "test-client",
-	}
-
-	logger := logrus.New()
-	client, err := NewClient(cfg, "test/will", logger)
-	if err != nil {
-		t.Fatalf("Expected no error creating client, got: %v", err)
-	}
-
-	err = client.Publish("test/topic", "test message", true)
-	if err == nil {
-		t.Error("Expected error when publishing while not connected")
+	if elapsed > 500*time.Millisecond {
+		t.Error("expected timeout around 100ms, but waited too long")
 	}
 }
 
 func TestClient_Publish_NotConnected(t *testing.T) {
-	cfg := &config.MQTTConfig{
-		BrokerURL: "mqtt://localhost:1883",
-		ClientID:  "test-client",
-	}
+	client := testClient()
 
-	logger := logrus.New()
-	client, err := NewClient(cfg, "test/will", logger)
-	if err != nil {
-		t.Fatalf("Expected no error creating client, got: %v", err)
+	if err := client.Publish("test/topic", "message", false); err == nil {
+		t.Error("expected error when publishing while not connected")
 	}
-
-	err = client.Publish("test/topic", "test message", false)
-	if err == nil {
-		t.Error("Expected error when publishing while not connected")
+	if err := client.Publish("test/topic", "message", true); err == nil {
+		t.Error("expected error when publishing retained while not connected")
 	}
 }
 
-func TestClient_Disconnect_Safe(t *testing.T) {
+func TestClient_DisconnectAndStop_Safe(t *testing.T) {
+	client := testClient()
+
+	if err := client.Stop(); err != nil {
+		t.Errorf("expected no error stopping client, got: %v", err)
+	}
+	if client.IsConnected() {
+		t.Error("expected client to not be connected after stop")
+	}
+
+	// Repeated disconnects must be safe.
+	client.Disconnect()
+	client.Disconnect()
+}
+
+func TestClient_QoSFromConfig(t *testing.T) {
+	zero := byte(0)
 	cfg := &config.MQTTConfig{
 		BrokerURL: "mqtt://localhost:1883",
 		ClientID:  "test-client",
+		QoS:       &zero,
+		KeepAlive: 60,
 	}
 
-	logger := logrus.New()
-	client, err := NewClient(cfg, "test/will", logger)
-	if err != nil {
-		t.Fatalf("Expected no error creating client, got: %v", err)
+	client := NewClient(cfg, "test/will", testLogger())
+	if got := client.config.GetQoS(); got != 0 {
+		t.Errorf("expected client to use explicit QoS 0, got %d", got)
 	}
-
-	// Stop/Disconnect should not return an error even if never connected
-	err = client.Stop()
-	if err != nil {
-		t.Errorf("Expected no error stopping client, got: %v", err)
-	}
-
-	// Verify client is not connected after stop
-	if client.IsConnected() {
-		t.Error("Expected client to not be connected after stop")
-	}
-
-	// Should be safe to call disconnect multiple times
-	client.Disconnect()
-	client.Disconnect()
 }

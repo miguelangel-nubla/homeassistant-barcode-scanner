@@ -10,13 +10,12 @@ import (
 
 	"github.com/karalabe/hid"
 	"github.com/sirupsen/logrus"
+
+	"github.com/miguelangel-nubla/homeassistant-barcode-scanner/pkg/config"
 )
 
 type BarcodeScanner struct {
-	vendorID          uint16
-	productID         uint16
-	requiredSerial    string
-	requiredInterface *int
+	ident config.ScannerIdentification
 
 	device     *hid.Device
 	deviceInfo *hid.DeviceInfo
@@ -35,36 +34,27 @@ type BarcodeScanner struct {
 	hidProcessor *HIDProcessor
 }
 
-func NewBarcodeScanner(vendorID, productID uint16, terminationChar, keyboardLayout string, logger *logrus.Logger) *BarcodeScanner {
-	return NewBarcodeScannerWithSerial(vendorID, productID, "", terminationChar, keyboardLayout, logger)
-}
-
-func NewBarcodeScannerWithSerial(
-	vendorID, productID uint16, requiredSerial, terminationChar, keyboardLayout string, logger *logrus.Logger,
-) *BarcodeScanner {
-	return NewBarcodeScannerWithInterface(vendorID, productID, requiredSerial, nil, terminationChar, keyboardLayout, logger)
-}
-
-func NewBarcodeScannerWithInterface(
-	vendorID, productID uint16, requiredSerial string, requiredInterface *int, terminationChar, keyboardLayout string, logger *logrus.Logger,
+func NewBarcodeScanner(
+	ident config.ScannerIdentification, terminationChar, keyboardLayout string, logger *logrus.Logger,
 ) *BarcodeScanner {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &BarcodeScanner{
-		vendorID:          vendorID,
-		productID:         productID,
-		requiredSerial:    requiredSerial,
-		requiredInterface: requiredInterface,
-		logger:            logger,
-		reconnectDelay:    time.Second,
-		ctx:               ctx,
-		cancel:            cancel,
+		ident:          ident,
+		logger:         logger,
+		reconnectDelay: time.Second,
+		ctx:            ctx,
+		cancel:         cancel,
 	}
 
 	s.hidProcessor = NewHIDProcessor(terminationChar, keyboardLayout, logger)
 	s.hidProcessor.SetOnScanCallback(func(barcode string) {
-		if s.onScan != nil {
-			s.onScan(barcode)
+		s.mutex.RLock()
+		callback := s.onScan
+		s.mutex.RUnlock()
+
+		if callback != nil {
+			callback(barcode)
 		}
 	})
 
@@ -89,42 +79,66 @@ func (s *BarcodeScanner) Start() error {
 	return nil
 }
 
-func (s *BarcodeScanner) TryInitialConnect() error {
-	device, _, err := s.findAndOpenDevice()
+// findAndOpenDevice locates and opens the HID device matching the given
+// identification. A device that matches but cannot be opened (typically a
+// permission problem) is reported with ErrDeviceOpenFailed.
+func findAndOpenDevice(ident config.ScannerIdentification) (*hid.Device, *hid.DeviceInfo, error) {
+	devices := hid.Enumerate(ident.VendorID, ident.ProductID)
+
+	var openErr error
+	for _, deviceInfo := range devices {
+		if !isTargetDevice(ident, &deviceInfo) {
+			continue
+		}
+
+		device, err := deviceInfo.Open()
+		if err != nil {
+			openErr = err
+			continue // Try next matching device
+		}
+
+		return device, normalizeDeviceInfo(&deviceInfo), nil
+	}
+
+	desc := fmt.Sprintf("device %04x:%04x", ident.VendorID, ident.ProductID)
+	if ident.Serial != "" {
+		desc += fmt.Sprintf(" serial '%s'", ident.Serial)
+	}
+	if ident.Interface != nil {
+		desc += fmt.Sprintf(" interface %d", *ident.Interface)
+	}
+
+	if openErr != nil {
+		return nil, nil, fmt.Errorf("%w: %s: %v", ErrDeviceOpenFailed, desc, openErr)
+	}
+	return nil, nil, fmt.Errorf("%s not found", desc)
+}
+
+func isTargetDevice(ident config.ScannerIdentification, deviceInfo *hid.DeviceInfo) bool {
+	if deviceInfo.VendorID != ident.VendorID || deviceInfo.ProductID != ident.ProductID {
+		return false
+	}
+
+	if ident.Serial != "" && deviceInfo.Serial != ident.Serial {
+		return false
+	}
+
+	if ident.Interface != nil && deviceInfo.Interface != *ident.Interface {
+		return false
+	}
+
+	return true
+}
+
+// ProbeDevice checks whether the device is currently present and openable
+// without keeping it open.
+func ProbeDevice(ident config.ScannerIdentification) error {
+	device, _, err := findAndOpenDevice(ident)
 	if err != nil {
 		return err
 	}
-
-	if device != nil {
-		_ = device.Close()
-	}
-
+	_ = device.Close()
 	return nil
-}
-
-func (s *BarcodeScanner) findAndOpenDevice() (*hid.Device, *hid.DeviceInfo, error) {
-	devices := hid.Enumerate(s.vendorID, s.productID)
-
-	for _, deviceInfo := range devices {
-		if s.isTargetDevice(&deviceInfo) {
-			device, err := deviceInfo.Open()
-			if err != nil {
-				continue // Try next device
-			}
-
-			normalizedInfo := s.normalizeDeviceInfo(&deviceInfo)
-			return device, normalizedInfo, nil
-		}
-	}
-
-	errorMsg := fmt.Sprintf("device %04x:%04x", s.vendorID, s.productID)
-	if s.requiredSerial != "" {
-		errorMsg += fmt.Sprintf(" serial '%s'", s.requiredSerial)
-	}
-	if s.requiredInterface != nil {
-		errorMsg += fmt.Sprintf(" interface %d", *s.requiredInterface)
-	}
-	return nil, nil, fmt.Errorf("%s not found", errorMsg)
 }
 
 func (s *BarcodeScanner) Stop() error {
@@ -159,14 +173,14 @@ func (s *BarcodeScanner) connectionManager() {
 			select {
 			case <-s.ctx.Done():
 				return
-			case <-time.After(s.reconnectDelay):
+			case <-time.After(s.getReconnectDelay()):
 			}
 		}
 	}
 }
 
 func (s *BarcodeScanner) tryConnect() bool {
-	device, deviceInfo, err := s.findAndOpenDevice()
+	device, deviceInfo, err := findAndOpenDevice(s.ident)
 	if err != nil {
 		return false
 	}
@@ -186,8 +200,8 @@ func (s *BarcodeScanner) tryConnect() bool {
 		callback(true)
 	}
 
-	interfaceInfo := fmt.Sprintf(" interface %d", deviceInfo.Interface)
-	s.logger.Debugf("Connected to device %04x:%04x%s (%s)", s.vendorID, s.productID, interfaceInfo, deviceInfo.Product)
+	s.logger.Debugf("Connected to device %04x:%04x interface %d (%s)",
+		s.ident.VendorID, s.ident.ProductID, deviceInfo.Interface, deviceInfo.Product)
 	return true
 }
 
@@ -215,25 +229,12 @@ func (s *BarcodeScanner) disconnect() {
 	}
 }
 
-func (s *BarcodeScanner) isTargetDevice(deviceInfo *hid.DeviceInfo) bool {
-	if deviceInfo.VendorID != s.vendorID || deviceInfo.ProductID != s.productID {
-		return false
-	}
-
-	if s.requiredSerial != "" && deviceInfo.Serial != s.requiredSerial {
-		return false
-	}
-
-	if s.requiredInterface != nil && deviceInfo.Interface != *s.requiredInterface {
-		return false
-	}
-
-	return true
-}
-
 func (s *BarcodeScanner) runReadLoop() {
 	const bufferSize = 64
 	const tickerInterval = 10 * time.Millisecond
+
+	// Discard any partial scan left over from a previous connection.
+	s.hidProcessor.Reset()
 
 	timeoutTicker := time.NewTicker(tickerInterval)
 	defer timeoutTicker.Stop()
@@ -252,9 +253,9 @@ func (s *BarcodeScanner) runReadLoop() {
 			s.hidProcessor.CheckTimeout()
 
 		case data := <-dataChan:
-			if len(data) > 0 && !s.isAllZeros(data) {
-				s.hidProcessor.ProcessData(data)
-			}
+			// Key-release reports (all zeros) are processed too: they reset
+			// the held-key tracking that deduplicates repeated reports.
+			s.hidProcessor.ProcessData(data)
 
 		case err := <-errorChan:
 			s.logger.Warnf("HID read error: %v", err)
@@ -293,19 +294,14 @@ func (s *BarcodeScanner) hidReadGoroutine(dataChan chan<- []byte, errorChan chan
 			if n > 0 {
 				data := make([]byte, n)
 				copy(data, buffer[:n])
-				dataChan <- data
+				select {
+				case dataChan <- data:
+				case <-s.ctx.Done():
+					return
+				}
 			}
 		}
 	}
-}
-
-func (s *BarcodeScanner) isAllZeros(data []byte) bool {
-	for _, b := range data {
-		if b != 0 {
-			return false
-		}
-	}
-	return true
 }
 
 func (s *BarcodeScanner) IsConnected() bool {
@@ -319,15 +315,7 @@ func (s *BarcodeScanner) GetConnectedDeviceInfo() *hid.DeviceInfo {
 	return info
 }
 
-func (s *BarcodeScanner) GetRequiredInterface() *int {
-	return s.requiredInterface
-}
-
-func (s *BarcodeScanner) GetRequiredSerial() string {
-	return s.requiredSerial
-}
-
-func (s *BarcodeScanner) normalizeDeviceInfo(deviceInfo *hid.DeviceInfo) *hid.DeviceInfo {
+func normalizeDeviceInfo(deviceInfo *hid.DeviceInfo) *hid.DeviceInfo {
 	normalized := *deviceInfo // Copy the struct
 	normalized.Manufacturer = strings.TrimSpace(normalized.Manufacturer)
 	normalized.Product = strings.TrimSpace(normalized.Product)
@@ -336,7 +324,15 @@ func (s *BarcodeScanner) normalizeDeviceInfo(deviceInfo *hid.DeviceInfo) *hid.De
 }
 
 func (s *BarcodeScanner) SetReconnectDelay(delay time.Duration) {
+	s.mutex.Lock()
 	s.reconnectDelay = delay
+	s.mutex.Unlock()
+}
+
+func (s *BarcodeScanner) getReconnectDelay() time.Duration {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	return s.reconnectDelay
 }
 
 func ListAllDevices() []hid.DeviceInfo {

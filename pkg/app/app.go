@@ -37,14 +37,11 @@ func (app *Application) Initialize() error {
 
 	bridgeAvailabilityTopic := homeassistant.GenerateBridgeAvailabilityTopic(&app.config.HomeAssistant)
 
-	mqttClient, err := mqtt.NewClient(
+	mqttClient := mqtt.NewClient(
 		&app.config.MQTT,
 		bridgeAvailabilityTopic,
 		app.logger,
 	)
-	if err != nil {
-		return err
-	}
 
 	haManager := homeassistant.NewIntegration(
 		mqttClient,

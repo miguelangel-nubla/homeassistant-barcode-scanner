@@ -77,7 +77,7 @@ func (h *EventHandlers) createConnectionHandler(
 				logger.Error("Scanner instance not found or not connected - this indicates a bug")
 			}
 		} else {
-			logger.Error("Scanner disconnected")
+			logger.Warn("Scanner disconnected")
 		}
 
 		if err := haManager.SetScannerConnected(scannerID, connected); err != nil {
