@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.23-labs@sha256:7eca9451d94f9b8ad22e44988b92d595d3e4d65163794237949a8c3413fbed5d
-FROM debian:trixie-slim@sha256:cedb1ef40439206b673ee8b33a46a03a0c9fa90bf3732f54704f99cb061d2c5a AS base
+FROM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 AS base
 ARG PROJECT_NAME=homeassistant-barcode-scanner
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
